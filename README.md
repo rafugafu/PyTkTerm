@@ -26,5 +26,35 @@ This is a full, real, standalone terminal inside a tkinter `Text` widget. It is 
 - `<<TerminalProcessEnded>>`: fired once when the child process exits.  
 - `<<TerminalStopped>>`: fired once the widget has fully torn down the process and its resources (skipped when restarting via `restart()`).  
 - `<<TerminalOutputProcessed>>`: fired after each batch of child output has been processed and rendered.  
+# Examples  
+Basic:  
+```python
+import tkinter as tk
+from PyTkTerm import Terminal
+
+root = tk.Tk()
+Terminal(root).pack(fill='both', expand=True)
+
+root.mainloop()
+```  
+With focus and process end handling:  
+```python
+import tkinter as tk
+from PyTkTerm import Terminal
+
+# setup window
+root = tk.Tk()
+
+# make terminal widget and focus
+tw = Terminal(root)
+tw.pack(fill='both', expand=True)
+tw.focus_set()
+
+# bind process end to close window
+tw.bind('<<TerminalStopped>>', lambda _: root.destroy())
+
+# mainloop
+root.mainloop()
+```  
 # To Use  
 Copy the PyTkTerm file into your program's directory. Then import `PyTkTerm.Terminal` normally. You can use this anywhere a normal tkinter `Text` widget can be used.  
