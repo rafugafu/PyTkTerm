@@ -2,7 +2,7 @@
 This is a full, real, standalone terminal inside a tkinter `Text` widget. It is the same as [PyNotes'](https://github.com/rafugafu/pynotes) integrated terminal, with a few modifications to make it completely standalone (removed `utils.show` messages and some references to `state`), affecting no behavior.  
 # Specifications  
 ## Constructor  
-`Terminal(master, command, endmessage, nocolor = False, *args, **kwargs)`  
+`Terminal(master, command=None, endmessage=None, nocolor=False, *args, **kwargs)`  
 - `master`: the parent tkinter widget.  
 - `command`: a list of argv to run in place of the shell, for example `['ssh', 'host']`. Pass `None` to launch the default shell (`$SHELL` on Linux, `powershell.exe` on Windows).  
 - `endmessage`: text appended to the widget and shown once the child process exits. Pass `None` to close/destroy the widget automatically instead of showing a message.  

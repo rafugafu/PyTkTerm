@@ -135,7 +135,7 @@ class Terminal(tk.Text):
 	_term_csi_keys = {'Up': 'A', 'Down': 'B', 'Right': 'C', 'Left': 'D', 'Home': 'H', 'End': 'F'}
 	_term_tilde_keys = {'Insert': '2', 'Delete': '3', 'Prior': '5', 'Next': '6', 'F5': '15', 'F6': '17', 'F7': '18', 'F8': '19', 'F9': '20', 'F10': '21', 'F11': '23', 'F12': '24'}
 	_term_ss3_keys = {'F1': 'P', 'F2': 'Q', 'F3': 'R', 'F4': 'S'}
-	def __init__(self, master, command, endmessage, nocolor = False, *args, **kwargs):
+	def __init__(self, master, command = None, endmessage = None, nocolor = False, *args, **kwargs):
 		kwargs.setdefault('font', (monospace, 12))
 		kwargs.setdefault('wrap', 'none')
 		super().__init__(master, *args, **kwargs)
