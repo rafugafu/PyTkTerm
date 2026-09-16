@@ -1,5 +1,5 @@
 # About  
-This is a full, real, standalone terminal inside a tkinter `Text` widget. It is the same as [PyNotes'](https://github.com/rafugafu/pynotes) integrated terminal, with a few modifications to make it completely standalone (removed `utils.show` messages and some references to `state`), affecting no behavior.  
+This is a full, real, standalone terminal emulator inside a tkinter `Text` widget. It is the same as [PyNotes'](https://github.com/rafugafu/pynotes) integrated terminal, with a few modifications to make it completely standalone (removed `utils.show` messages and some references to `state`), affecting no behavior.  
 # Specifications  
 ## Constructor  
 `Terminal(master, command=None, endmessage=None, nocolor=False, *args, **kwargs)`  
