@@ -16,9 +16,10 @@ This is a full, real, standalone terminal inside a tkinter `Text` widget. It is 
 - Supports bracketed paste mode, focus-in/focus-out reporting, application cursor keys mode, and `modifyOtherKeys` for modified special keys.  
 - Supports mouse reporting in X10, normal, button-motion, and any-motion tracking modes, with both legacy and SGR (1006) coordinate encoding, plus scroll-wheel-to-arrow-key translation outside mouse mode via alternate scroll.  
 - Supports OSC sequences for the clipboard (OSC 52), and for querying/setting the foreground color, background color, and cursor color (OSC 10/11/12/112).  
-- Supports DECSCUSR cursor shape/blink selection (block, underline, bar; blinking or steady) and honors DECTCEM cursor visibility.  
+- Supports DECSCUSR cursor shape/blink selection (block, underline, bar; blinking or steady) and honors DECTCEM cursor visibility. The cursor is drawn as a custom overlay widget positioned over the current cell, not the `Text` widget's native insert cursor (which is disabled), so it can take on any of the three shapes, follow the child process's requested color, and blink independently while still showing the character underneath it in block shape.  
 - Right-click opens a context menu with Copy, Paste, and Select All; selections can also be made and copied/pasted with the mouse or `Ctrl+Shift+C`/`Ctrl+Shift+V`.  
-- Automatically adapts to `<<ThemeChanged>>` events and live tkinter color option changes, and resizes the pty and redraws on widget resize.  
+- Automatically adapts to `<<ThemeChanged>>` events and live tkinter color option changes.  
+- Debounces widget resize events, then recomputes the character grid from the new pixel size, adjusts the visible scrollback window (or pads/trims each row to the new column count when in the alternate screen buffer, without rewrapping), and pushes the new size to the pty (`TIOCSWINSZ` plus `SIGWINCH`) so the child process is notified. Existing line content is never rewrapped to the new width.  
 ## Public Methods  
 - `setcursortype(to = 'block')`: sets the cursor shape to `'block'`, `'underline'`, or `'bar'`.  
 - `restart()`: terminates the running child process, clears the screen, and starts a new one with the same `command`.  
