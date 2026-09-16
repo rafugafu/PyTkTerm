@@ -57,5 +57,10 @@ tw.bind('<<TerminalStopped>>', lambda _: root.destroy())
 # mainloop
 root.mainloop()
 ```  
+# Dependencies  
+- Python 3 with `tkinter` (standard library).  
+- On Windows only: [`pywinpty`](https://pypi.org/project/pywinpty/) (imported as `winpty`), used in place of the standard library's `pty` module, which is Linux-only.  
+- No other dependencies; everything else used (`os`, `platform`, `subprocess`, `codecs`, `sys`, `base64`, `re`, `threading`, `time`, and, on Linux, `pty`/`fcntl`/`termios`/`struct`/`select`/`signal`) is part of the Python standard library.  
 # To Use  
-Copy the PyTkTerm file into your program's directory. Then import `PyTkTerm.Terminal` normally. You can use this anywhere a normal tkinter `Text` widget can be used.  
+1. Install the [dependencies](#dependencies).
+2. Copy the PyTkTerm file into your program's directory. Then import `PyTkTerm.Terminal` normally. You can use this anywhere a normal tkinter `Text` widget can be used.  
