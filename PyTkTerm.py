@@ -1785,7 +1785,7 @@ class Terminal(tk.Text):
 					self.insert('end', '\n\n\n' + self.endmessage)
 					self.see('end')
 					self.unbind('<Key>')
-					self.bind('<Key>', lambda e: self._terminate_process())
+					self.bind('<Key>', lambda e: (self._terminate_process(), 'break')[1])
 				else:
 					self.master.after_idle(self._terminate_process)
 				self._polling = False
