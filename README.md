@@ -54,7 +54,27 @@ tw.focus_set()
 # bind process end to close window
 tw.bind('<<TerminalStopped>>', lambda _: root.destroy())
 
-# mainloop
+# show window
+root.mainloop()
+```  
+With window title and endmessage:
+```python
+import tkinter as tk
+from PyTkTerm import Terminal
+
+# setup window
+root = tk.Tk()
+root.title('Terminal')
+
+# make terminal widget and focus
+tw = Terminal(root, endmessage='--- process finished, press any key to continue ---')
+tw.pack(fill='both', expand=True)
+tw.focus_set()
+
+# bind process end to close window
+tw.bind('<<TerminalStopped>>', lambda _: root.destroy())
+
+# show window
 root.mainloop()
 ```  
 # Dependencies  
