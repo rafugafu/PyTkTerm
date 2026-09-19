@@ -18,7 +18,7 @@ else:
 	monospace = 'monospace'
 _TERM_FRAME_MS = 16
 _TERM_FRAME_BUDGET = 0.008
-_PTY_MAX_PENDING_ESC = 4096
+_PTY_MAX_PENDING_ESC = 600000
 def _sgr_is_highlight(params):
 	result = None
 	idx = 0
@@ -177,6 +177,7 @@ class Terminal(tk.Text):
 		self._saved_sgr = None
 		self._tab_stops = set()
 		self._pending_esc = ''
+		self._osc_skipping = False
 		self._last_char = ''
 		self._modify_other_keys = 0
 		self._sgr_state = _sgr_new_state()
@@ -623,6 +624,7 @@ class Terminal(tk.Text):
 		self._saved_sgr = None
 		self._tab_stops = set()
 		self._pending_esc = ''
+		self._osc_skipping = False
 		self._last_char = ''
 		self._modify_other_keys = 0
 		self._sgr_state = _sgr_new_state()
@@ -985,6 +987,14 @@ class Terminal(tk.Text):
 		if self._pending_esc:
 			text = self._pending_esc + text
 			self._pending_esc = ''
+		if self._osc_skipping:
+			_skip_end = re.search(r'\x07|\x1b\\', text)
+			if not _skip_end:
+				if text.endswith('\x1b'):
+					self._pending_esc = '\x1b'
+				return
+			text = text[_skip_end.end():]
+			self._osc_skipping = False
 		self.mark_set('insert', self.cursor)
 		i = 0
 		n = len(text)
@@ -1501,6 +1511,7 @@ class Terminal(tk.Text):
 						self._pending_esc = rest
 						break
 					else:
+						self._osc_skipping = True
 						i += len(rest)
 				elif nxt == 'M':
 					if self._alt_mode:
