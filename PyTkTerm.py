@@ -1231,15 +1231,16 @@ class Terminal(tk.Text):
 							if self._alt_mode:
 								self._saved_cursor = self.index('insert')
 							else:
-								self._saved_cursor = (self._cur_line, int(col))
+								self._saved_cursor = (self._cur_line - self.screen_top, int(col))
 						elif cmd == 'u' and not _private:
 							if self._saved_cursor is not None:
 								if self._alt_mode:
 									self.mark_set('insert', self._saved_cursor)
 								else:
-									self._cur_line, _sc = self._saved_cursor
+									_sr, _sc = self._saved_cursor
+									self._cur_line = self.screen_top + min(_sr, self._VT_ROWS - 1)
 									self._vt_sync()
-									self.mark_set('insert', f'{self._cur_line}.{_sc}')
+									self._term_goto(self._cur_line, _sc)
 						elif cmd == 'G':
 							mv = p[0] or 1
 							if self._alt_mode:
@@ -1637,7 +1638,7 @@ class Terminal(tk.Text):
 					if self._alt_mode:
 						self._saved_cursor = self.index('insert')
 					else:
-						self._saved_cursor = (self._cur_line, int(self.index('insert').split('.')[1]))
+						self._saved_cursor = (self._cur_line - self.screen_top, int(self.index('insert').split('.')[1]))
 					self._saved_sgr = dict(self._sgr_state)
 					i += 2
 				elif nxt == '8':
@@ -1645,9 +1646,10 @@ class Terminal(tk.Text):
 						if self._alt_mode:
 							self.mark_set('insert', self._saved_cursor)
 						else:
-							self._cur_line, _sc = self._saved_cursor
+							_sr, _sc = self._saved_cursor
+							self._cur_line = self.screen_top + min(_sr, self._VT_ROWS - 1)
 							self._vt_sync()
-							self.mark_set('insert', f'{self._cur_line}.{_sc}')
+							self._term_goto(self._cur_line, _sc)
 					if self._saved_sgr is not None:
 						self._sgr_state.update(self._saved_sgr)
 						if not self.nocolor:
