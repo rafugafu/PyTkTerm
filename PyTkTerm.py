@@ -510,15 +510,12 @@ class Terminal(tk.Text):
 		else:
 			if self._cur_line - self.screen_top + 1 > rows:
 				self.screen_top = self._cur_line - rows + 1
-			_bb = self.screen_top + rows - 1
-			_last = self._term_last_real_line()
-			if _last > _bb:
-				self.delete(f'{_bb + 1}.0', 'end')
 		self._GRID_COLS = cols
 		self._GRID_ROWS = rows
 		self._VT_ROWS = rows
 		self._scroll_top = 1
 		self._scroll_bot = rows
+		self._term_materialize_screen()
 		if platform.system() == 'Linux' and hasattr(self, 'master_fd'):
 			import fcntl
 			import termios
@@ -856,6 +853,8 @@ class Terminal(tk.Text):
 		self._sgr_state.update(saved_sgr)
 		self._recompute_sgr_tag()
 		self._cur_line = saved_curline
+		if self._cur_line - self.screen_top + 1 > self._VT_ROWS:
+			self.screen_top = self._cur_line - self._VT_ROWS + 1
 		self.mark_set('insert', saved_cursor)
 		self.cursor = saved_cursor
 	def _deccolm_clear(self):
@@ -913,10 +912,7 @@ class Terminal(tk.Text):
 		self._term_insert(f'{row}.{gcol}', ch)
 		self.mark_set('insert', f'{row}.{gcol + 1}')
 	def _term_last_real_line(self):
-		_n = int(self.index('end').split('.')[0])
-		if self.get(f'{_n - 1}.0', f'{_n - 1}.end'):
-			return _n - 1
-		return _n - 2
+		return int(self.index('end - 1 char').split('.')[0])
 	def _vt_sync(self):
 		last = self._term_last_real_line()
 		if self._cur_line > last:
@@ -924,13 +920,22 @@ class Terminal(tk.Text):
 			self.insert('end', '\n' * (self._cur_line - last))
 			self.mark_set('insert', _ins)
 	def _term_materialize_screen(self):
-		if self._alt_mode:
+		if not self.running:
 			return
-		_bb = self.screen_top + self._VT_ROWS - 1
+		if self._alt_mode:
+			_bb = self._GRID_ROWS
+			_pad = '\n' + ' ' * self._GRID_COLS
+		else:
+			_bb = max(self.screen_top + self._VT_ROWS - 1, self._cur_line)
+			_pad = '\n'
 		_last = self._term_last_real_line()
-		if _last < _bb:
+		if _last > _bb:
 			_ins = self.index('insert')
-			self.insert('end', '\n' * (_bb - _last))
+			self.delete(f'{_bb}.end', 'end - 1 char')
+			self.mark_set('insert', _ins)
+		elif _last < _bb:
+			_ins = self.index('insert')
+			self.insert('end', _pad * (_bb - _last))
 			self.mark_set('insert', _ins)
 	def _term_goto(self, _gl, _gc):
 		_ll = int(self.index(f'{_gl}.end').split('.')[1])
@@ -1233,14 +1238,13 @@ class Terminal(tk.Text):
 							else:
 								self._saved_cursor = (self._cur_line - self.screen_top, int(col))
 						elif cmd == 'u' and not _private:
-							if self._saved_cursor is not None:
-								if self._alt_mode:
-									self.mark_set('insert', self._saved_cursor)
-								else:
-									_sr, _sc = self._saved_cursor
-									self._cur_line = self.screen_top + min(_sr, self._VT_ROWS - 1)
-									self._vt_sync()
-									self._term_goto(self._cur_line, _sc)
+							if self._alt_mode and isinstance(self._saved_cursor, str):
+								self.mark_set('insert', self._saved_cursor)
+							elif not self._alt_mode and isinstance(self._saved_cursor, tuple):
+								_sr, _sc = self._saved_cursor
+								self._cur_line = self.screen_top + min(_sr, self._VT_ROWS - 1)
+								self._vt_sync()
+								self._term_goto(self._cur_line, _sc)
 						elif cmd == 'G':
 							mv = p[0] or 1
 							if self._alt_mode:
@@ -1642,14 +1646,13 @@ class Terminal(tk.Text):
 					self._saved_sgr = dict(self._sgr_state)
 					i += 2
 				elif nxt == '8':
-					if self._saved_cursor is not None:
-						if self._alt_mode:
-							self.mark_set('insert', self._saved_cursor)
-						else:
-							_sr, _sc = self._saved_cursor
-							self._cur_line = self.screen_top + min(_sr, self._VT_ROWS - 1)
-							self._vt_sync()
-							self._term_goto(self._cur_line, _sc)
+					if self._alt_mode and isinstance(self._saved_cursor, str):
+						self.mark_set('insert', self._saved_cursor)
+					elif not self._alt_mode and isinstance(self._saved_cursor, tuple):
+						_sr, _sc = self._saved_cursor
+						self._cur_line = self.screen_top + min(_sr, self._VT_ROWS - 1)
+						self._vt_sync()
+						self._term_goto(self._cur_line, _sc)
 					if self._saved_sgr is not None:
 						self._sgr_state.update(self._saved_sgr)
 						if not self.nocolor:
@@ -1759,6 +1762,7 @@ class Terminal(tk.Text):
 					self.mark_set('insert', f'{self._cur_line}.{col}')
 			else:
 				i += 1
+		self._term_materialize_screen()
 		self.cursor = self.index('insert')
 		self._cursor_schedule_redraw()
 	def _poll(self):
