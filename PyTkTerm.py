@@ -211,7 +211,7 @@ class Terminal(tk.Text):
 		self._read_generation = 0
 		self._follow_bottom = True
 		self._poll_after_id = None
-		self._termmenu = tk.Menu(master = self)
+		self._termmenu = tk.Menu(master = self, tearoff = 0)
 		self._termmenu.add_command(label = 'Copy', command = self._copy_selection)
 		self._termmenu.add_command(label = 'Paste', command = self._paste_clipboard)
 		self._termmenu.add_separator()
