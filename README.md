@@ -77,6 +77,14 @@ tw.bind('<<TerminalStopped>>', lambda _: root.destroy())
 # show window
 root.mainloop()
 ```  
+# Full Terminal Application  
+Full example terminal application made using PyTkTerm in `terminal_app.py`. Includes:  
+- Custom closeable styled ttk notebook for tabs.  
+- Tabs for independent terminals - press Control-T in any terminal to open another one.  
+- Terminals with black `bg` and white `fg`.  
+- Commented out set icon and add `/usr/share/PyTkTerm/` to path to easily make a standalone terminal application.  
+- Closes window when last tab is closed. Otherwise, focus last remaining tab on tab close.  
+- Accepts starting command for the first terminal as an argument and verifies it.  
 # Dependencies  
 - Python 3 with `tkinter` (standard library).  
 - On Windows only: [`pywinpty`](https://pypi.org/project/pywinpty/) (imported as `winpty`), used in place of the standard library's `pty` module, which is Linux-only.  
