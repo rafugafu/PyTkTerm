@@ -31,7 +31,7 @@ This is a full, real, standalone terminal emulator inside a tkinter `Text` widge
 Basic:  
 ```python
 import tkinter as tk
-from PyTkTerm import Terminal
+from pytkterm import Terminal
 
 root = tk.Tk()
 Terminal(root).pack(fill='both', expand=True)
@@ -41,7 +41,7 @@ root.mainloop()
 With focus and process end handling:  
 ```python
 import tkinter as tk
-from PyTkTerm import Terminal
+from pytkterm import Terminal
 
 # setup window
 root = tk.Tk()
@@ -60,7 +60,7 @@ root.mainloop()
 With window title and endmessage:
 ```python
 import tkinter as tk
-from PyTkTerm import Terminal
+from pytkterm import Terminal
 
 # setup window
 root = tk.Tk()
@@ -83,4 +83,4 @@ root.mainloop()
 - No other dependencies; everything else used (`os`, `platform`, `subprocess`, `codecs`, `sys`, `base64`, `re`, `threading`, `time`, and, on Linux, `pty`/`fcntl`/`termios`/`struct`/`select`/`signal`) is part of the Python standard library.  
 # To Use  
 1. Install the [dependencies](#dependencies).
-2. Copy the PyTkTerm file into your program's directory. Then import `PyTkTerm.Terminal` normally. You can use this anywhere a normal tkinter `Text` widget can be used.  
+2. Copy the PyTkTerm file into your program's directory. Then import `pytkterm.Terminal` normally. You can use this anywhere a normal tkinter `Text` widget can be used.  
