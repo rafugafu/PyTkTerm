@@ -1919,18 +1919,32 @@ class Terminal(tk.Text):
                                 _rtop = self.screen_top + self._scroll_top - 1
                                 _bot = self.screen_top + self._scroll_bot - 1
                                 _n = min(p[0] or 1, _bot - _rtop + 1)
-                                _last = self._term_last_real_line()
-                                _sfill = self._term_erase_fill_tag()
                                 _scol = int(self.index("insert").split(".")[1])
-                                if _last < _bot:
-                                    self.insert("end", "\n" * (_bot - _last))
-                                self.delete(f"{_rtop}.0", f"{_rtop + _n}.0")
-                                self.insert(f"{_bot - _n + 1}.0", "\n" * _n)
-                                if _sfill is not None:
-                                    for _sl in range(_bot - _n + 1, _bot + 1):
-                                        self.insert(
-                                            f"{_sl}.0", " " * self._GRID_COLS, _sfill
-                                        )
+                                if (
+                                    self._scroll_top == 1
+                                    and self._scroll_bot == self._VT_ROWS
+                                ):
+                                    # No custom scroll region: this is
+                                    # the same as _n ordinary linefeeds,
+                                    # so the scrolled-off lines stay in
+                                    # scrollback instead of being lost.
+                                    self.screen_top += _n
+                                    self._cur_line += _n
+                                    self._term_materialize_screen()
+                                else:
+                                    _last = self._term_last_real_line()
+                                    _sfill = self._term_erase_fill_tag()
+                                    if _last < _bot:
+                                        self.insert("end", "\n" * (_bot - _last))
+                                    self.delete(f"{_rtop}.0", f"{_rtop + _n}.0")
+                                    self.insert(f"{_bot - _n + 1}.0", "\n" * _n)
+                                    if _sfill is not None:
+                                        for _sl in range(_bot - _n + 1, _bot + 1):
+                                            self.insert(
+                                                f"{_sl}.0",
+                                                " " * self._GRID_COLS,
+                                                _sfill,
+                                            )
                                 self.mark_set("insert", f"{self._cur_line}.{_scol}")
                         elif cmd == "T":
                             if self._alt_mode:
