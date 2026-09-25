@@ -903,6 +903,10 @@ class Terminal(tk.Text):
             except Exception:
                 pass
         self._pending_after_ids.clear()
+        # The pending cursor redraw was just cancelled, so its "already
+        # scheduled" flag has to be cleared too, or no cursor redraw can
+        # ever be scheduled again after a restart.
+        self._cursor_redraw_pending = False
         if not restarting:
             try:
                 self.event_generate("<<TerminalStopped>>")
@@ -921,6 +925,9 @@ class Terminal(tk.Text):
         self.cursor = "1.0"
         self.screen_top = 1
         self._cur_line = 1
+        # A fresh screen always follows the bottom again, even if the
+        # user had scrolled up into the old scrollback before restarting.
+        self._follow_bottom = True
         self._saved_cursor = None
         self._saved_sgr = None
         self._tab_stops = set()
