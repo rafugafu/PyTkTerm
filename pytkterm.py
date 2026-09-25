@@ -771,7 +771,10 @@ class Terminal(tk.Text):
                 elif len(line) < cols:
                     self.insert(f"{ln}.end", " " * (cols - len(line)))
             if rows > actual_rows:
-                self.insert("end", "\n".join([" " * cols] * (rows - actual_rows)))
+                # The alt-screen text has no trailing newline, so every new
+                # row needs its own leading one or the first would be glued
+                # onto the old last row.
+                self.insert("end", ("\n" + " " * cols) * (rows - actual_rows))
             elif rows < actual_rows:
                 self.delete(f"{rows + 1}.0", "end")
             _cur_row, _cur_col = (int(_x) for _x in self.index("insert").split("."))
@@ -783,6 +786,11 @@ class Terminal(tk.Text):
         else:
             if self._cur_line - self.screen_top + 1 > rows:
                 self.screen_top = self._cur_line - rows + 1
+        if cols > self._GRID_COLS:
+            # Newly exposed columns get the default tab stop every 8
+            # columns; without them a tab past the old width jumps to the
+            # last column instead of the next multiple of 8.
+            self._tab_stops.update(range((self._GRID_COLS + 7) // 8 * 8, cols, 8))
         self._GRID_COLS = cols
         self._GRID_ROWS = rows
         self._VT_ROWS = rows
@@ -1849,9 +1857,25 @@ class Terminal(tk.Text):
                             if self.compare(_pend, ">", f"{ln}.end"):
                                 _pend = f"{ln}.end"
                             self.delete("insert", _pend)
+                            if self._alt_mode:
+                                # Rows on the alt screen are always exactly
+                                # _GRID_COLS wide, so blank cells fill in
+                                # from the right margin.
+                                _pfill = self._term_erase_fill_tag()
+                                _plen = int(self.index(f"{ln}.end").split(".")[1])
+                                if _plen < self._GRID_COLS:
+                                    self.insert(
+                                        f"{ln}.end",
+                                        " " * (self._GRID_COLS - _plen),
+                                        _pfill if _pfill is not None else "",
+                                    )
                         elif cmd == "@":
                             mv = p[0] or 1
                             self.insert("insert", " " * mv)
+                            if self._alt_mode:
+                                # Characters pushed past the right margin
+                                # are lost, not kept in an overlong row.
+                                self.delete(f"{ln}.{self._GRID_COLS}", f"{ln}.end")
                         elif cmd == "L":
                             if self._alt_mode:
                                 r0 = int(ln)
