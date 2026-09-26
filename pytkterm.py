@@ -1677,8 +1677,14 @@ class Terminal(tk.Text):
                                 for _pr in range(self.screen_top, _pbb + 1):
                                     if self.get(f"{_pr}.0", f"{_pr}.end").strip():
                                         _nonblank = _pr - self.screen_top + 1
-                                self.screen_top += _nonblank
-                                self._cur_line += _nonblank
+                                # The grid can be slightly shorter than the
+                                # widget's real visible height, so a row of old
+                                # text could still show above the cleared screen.
+                                # Push one row more than the last non-blank one
+                                # so that row is blank instead.
+                                _push = _nonblank + 1
+                                self.screen_top += _push
+                                self._cur_line += _push
                                 self._vt_sync()
                                 _bb = self.screen_top + self._VT_ROWS - 1
                                 _last = self._term_last_real_line()
@@ -1701,6 +1707,9 @@ class Terminal(tk.Text):
                                     self._cur_line = max(1, self._cur_line - del_n)
                                     self.screen_top = 1
                                     self.mark_set("insert", f"{self._cur_line}.{col}")
+                                # With the scrollback gone there is nothing
+                                # to scroll back to, so follow the bottom again.
+                                self._follow_bottom = True
                             elif p[0] == 1:
                                 _il = int(ln)
                                 _ic = int(col)
