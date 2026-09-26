@@ -10,6 +10,7 @@ import re
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 
 DEBOUNCE_TIME = 300
 if platform.system() != "Linux":
@@ -310,6 +311,7 @@ class Terminal(tk.Text):
         self._modify_other_keys = 0
         self._sgr_state = _sgr_new_state()
         self._sgr_tags_done = set()
+        self._sgr_fonts = {}
         self._blink_tags = {}
         self._blink_visible = True
         self._blink_after_id = None
@@ -649,18 +651,13 @@ class Terminal(tk.Text):
         to convert the widget's pixel size to a column/row grid size."""
         if self.charwidth is not None:
             return
-        super().insert("1.0", " ")
-        box = super().bbox("1.0")
-        super().delete("1.0", "1.1")
+        _top = self.index("@0,0")
+        super().insert(_top, " ")
+        box = super().bbox(_top)
+        super().delete(_top, f"{_top}+1c")
         if box:
             self.charwidth = max(1, box[2])
             self.charheight = max(1, box[3])
-        else:
-            import tkinter.font as _tkfont
-
-            f = _tkfont.Font(font=self.cget("font"))
-            self.charwidth = max(1, f.measure(" "))
-            self.charheight = max(1, f.metrics("linespace"))
 
     def _term_start_process(self):
         """Size the grid, then spawn the subprocess attached to a PTY
@@ -1027,6 +1024,20 @@ class Terminal(tk.Text):
             return
         self._blink_after_id = self.after(500, self._blink_tick)
 
+    def _term_font_variant(self, bold=False, italic=False):
+        """A font with this terminal's current font (family, size, ...)
+        but bold and/or italic. Cached so the Font object stays alive
+        for as long as tags use it."""
+        key = (bold, italic)
+        if key not in self._sgr_fonts:
+            variant = tkfont.Font(font=self.cget("font"))
+            if bold:
+                variant.configure(weight="bold")
+            if italic:
+                variant.configure(slant="italic")
+            self._sgr_fonts[key] = variant
+        return self._sgr_fonts[key]
+
     def _recompute_sgr_tag(self):
         """Resolve the current SGR state to a (cached, reused) tkinter
         tag name, creating that tag (colors, bold/italic font, underline,
@@ -1063,22 +1074,20 @@ class Terminal(tk.Text):
         if self._sgr_state["blink"]:
             name += "_bl"
         if name not in self._sgr_tags_done:
-            fnt = (
-                (monospace, 12, "bold")
-                if self._sgr_state["bold"]
-                else (
-                    (monospace, 12, "italic")
-                    if self._sgr_state["italic"]
-                    else (monospace, 12)
-                )
-            )
+            _bold = self._sgr_state["bold"]
+            _italic = self._sgr_state["italic"]
+            # Only bold/italic tags need their own font; every other tag
+            # keeps the widget's font, whatever it currently is.
+            _font_options = {}
+            if _bold or _italic:
+                _font_options["font"] = self._term_font_variant(_bold, _italic)
             self.tag_configure(
                 name,
                 foreground=fg if fg else "",
                 background=bg if bg else "",
                 underline=self._sgr_state["underline"],
                 overstrike=self._sgr_state["strike"],
-                font=fnt,
+                **_font_options,
             )
             self.tag_lower(name, "sel")
             self._sgr_tags_done.add(name)
