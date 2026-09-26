@@ -253,7 +253,9 @@ class Terminal(tk.Text):
     # to the escape sequences a terminal application expects for that
     # key (used by _key()).
 
-    def __init__(self, master, command=None, endmessage=None, nocolor=False, *args, **kwargs):
+    def __init__(
+        self, master, command=None, endmessage=None, nocolor=False, *args, **kwargs
+    ):
         """command: the argv list to run (None for the user's default
         shell). endmessage: text to show (and wait for a keypress on)
         once the process exits; if falsy, the buffer just closes itself
@@ -320,6 +322,7 @@ class Terminal(tk.Text):
         self._modify_other_keys = 0
         self._sgr_state = _sgr_new_state()
         self._sgr_tags_done = set()
+        self._sgr_theme_tags = {}
         self._sgr_fonts = {}
         self._blink_tags = {}
         self._blink_visible = True
@@ -512,18 +515,16 @@ class Terminal(tk.Text):
             )
         except Exception:
             _char = ""
+        _char_fg, _char_bg = self._cursor_char_colors()
+        _cursor_bg = self._cursor_color if self._cursor_color_custom else _char_fg
+        _cursor_fg = self._term_default_bg if self._cursor_color_custom else _char_bg
         if self._cursor_shape == "bar":
-            self._cursor_widget.config(text="", background=self._cursor_color)
+            self._cursor_widget.config(text="", background=_cursor_bg)
             self._cursor_widget.place(x=_bx, y=_by, width=2, height=_charh)
         elif self._cursor_shape == "underline":
-            self._cursor_widget.config(text="", background=self._cursor_color)
+            self._cursor_widget.config(text="", background=_cursor_bg)
             self._cursor_widget.place(x=_bx, y=_by + _charh - 2, width=_charw, height=2)
         else:
-            _char_fg, _char_bg = self._cursor_char_colors()
-            _cursor_bg = self._cursor_color if self._cursor_color_custom else _char_fg
-            _cursor_fg = (
-                self._term_default_bg if self._cursor_color_custom else _char_bg
-            )
             self._cursor_widget.config(
                 text=_char if _char and _char != "\n" else " ",
                 background=_cursor_bg,
@@ -641,6 +642,7 @@ class Terminal(tk.Text):
         self.tag_configure(
             "sel", background=self._term_default_fg, foreground=self._term_default_bg
         )
+        self._term_retheme_tags()
         self._cursor_set_color(self._term_default_fg, custom=False)
 
     def _term_reset_tabs(self):
@@ -976,7 +978,29 @@ class Terminal(tk.Text):
         """Whether colour is unset or resolves to the same RGB as the
         terminal's default, so a redundant SGR/fill tag isn't created
         for it."""
-        return colour is None or self.winfo_rgb(colour) == default_rgb
+        return (
+            colour is None
+            or self.winfo_rgb(self._term_theme_color(colour)) == default_rgb
+        )
+
+    def _term_theme_color(self, colour):
+        """The real color for colour, which is either a color or "@fg"/
+        "@bg" standing for the terminal's current default fg/bg (that is
+        how SGR tags refer to theme colors, see _recompute_sgr_tag())."""
+        if colour == "@fg":
+            return self._term_default_fg
+        if colour == "@bg":
+            return self._term_default_bg
+        return colour
+
+    def _term_retheme_tags(self):
+        """Reconfigure the SGR tags whose colors are the default fg/bg
+        (e.g. reverse video) after those changed with the theme."""
+        for name, options in self._sgr_theme_tags.items():
+            self.tag_configure(
+                name,
+                **{opt: self._term_theme_color(role) for opt, role in options.items()},
+            )
 
     def _term_erase_fill_tag(self):
         """The tag to fill erased/blank cells with, if the current SGR
@@ -985,14 +1009,14 @@ class Terminal(tk.Text):
         background); None if no special fill is needed."""
         if self.nocolor:
             return None
-        fg, bg = _term_sgr_resolve(
-            self._sgr_state, self._term_default_fg, self._term_default_bg
-        )
+        fg, bg = _term_sgr_resolve(self._sgr_state, "@fg", "@bg")
         if self._is_default_colour(bg, self._default_bg_rgb):
             return None
-        name = "sgrbg_" + bg.replace("#", "")
+        name = "sgrbg_" + bg.replace("#", "").replace("@", "t")
         if name not in self._sgr_tags_done:
-            self.tag_configure(name, background=bg)
+            self.tag_configure(name, background=self._term_theme_color(bg))
+            if bg == "@fg":
+                self._sgr_theme_tags[name] = {"background": bg}
             self.tag_lower(name, "sel")
             self._sgr_tags_done.add(name)
         return name
@@ -1019,13 +1043,18 @@ class Terminal(tk.Text):
                 continue
             try:
                 self.tag_configure(
-                    _bn, foreground=_cols[0] if self._blink_visible else _cols[1]
+                    _bn,
+                    foreground=self._term_theme_color(
+                        _cols[0] if self._blink_visible else _cols[1]
+                    ),
                 )
             except Exception:
                 pass
         for _bn in _dead:
             try:
-                self.tag_configure(_bn, foreground=self._blink_tags[_bn][0])
+                self.tag_configure(
+                    _bn, foreground=self._term_theme_color(self._blink_tags[_bn][0])
+                )
             except Exception:
                 pass
             del self._blink_tags[_bn]
@@ -1052,9 +1081,7 @@ class Terminal(tk.Text):
         tag name, creating that tag (colors, bold/italic font, underline,
         strike) the first time it's needed. self._sgr_tag_cache is None
         when the state is plain/default, needing no tag at all."""
-        fg, bg = _term_sgr_resolve(
-            self._sgr_state, self._term_default_fg, self._term_default_bg
-        )
+        fg, bg = _term_sgr_resolve(self._sgr_state, "@fg", "@bg")
         if (
             self._is_default_colour(fg, self._default_fg_rgb)
             and self._is_default_colour(bg, self._default_bg_rgb)
@@ -1068,9 +1095,9 @@ class Terminal(tk.Text):
             return
         name = (
             "sgr_"
-            + (fg.replace("#", "") if fg else "x")
+            + fg.replace("#", "").replace("@", "t")
             + "_"
-            + (bg.replace("#", "") if bg else "x")
+            + bg.replace("#", "").replace("@", "t")
         )
         if self._sgr_state["bold"]:
             name += "_b"
@@ -1087,25 +1114,35 @@ class Terminal(tk.Text):
             _italic = self._sgr_state["italic"]
             # Only bold/italic tags need their own font; every other tag
             # keeps the widget's font, whatever it currently is.
-            _font_options = {}
+            _tag_options = {}
             if _bold or _italic:
-                _font_options["font"] = self._term_font_variant(_bold, _italic)
+                _tag_options["font"] = self._term_font_variant(_bold, _italic)
+            # Colors that are the widget's own default stay off the tag so
+            # the text follows it; the tag's other theme colors (reverse
+            # video, conceal) are reconfigured on a theme change.
+            if fg != "@fg":
+                _tag_options["foreground"] = self._term_theme_color(fg)
+            if bg != "@bg":
+                _tag_options["background"] = self._term_theme_color(bg)
+            _theme_options = {
+                _opt: _colour
+                for _opt, _colour in (("foreground", fg), ("background", bg))
+                if _colour in ("@fg", "@bg") and _opt in _tag_options
+            }
+            if _theme_options:
+                self._sgr_theme_tags[name] = _theme_options
             self.tag_configure(
                 name,
-                foreground=fg if fg else "",
-                background=bg if bg else "",
                 underline=self._sgr_state["underline"],
                 overstrike=self._sgr_state["strike"],
-                **_font_options,
+                **_tag_options,
             )
             self.tag_lower(name, "sel")
             self._sgr_tags_done.add(name)
         self._sgr_tag_cache = name
         if self._sgr_state["blink"]:
             if name not in self._blink_tags:
-                _onfg = fg if fg else self._term_default_fg
-                _offfg = bg if bg else self._term_default_bg
-                self._blink_tags[name] = (_onfg, _offfg)
+                self._blink_tags[name] = (fg, bg)
             self._start_blink()
 
     def insert(self, index, chars, *tags):
@@ -3039,8 +3076,7 @@ class Terminal(tk.Text):
                 self._default_fg_rgb = self.winfo_rgb(_fg)
                 self._default_bg_rgb = self.winfo_rgb(_bg)
                 self.tag_configure("sel", background=_fg, foreground=_bg)
-                if not self.nocolor:
-                    self._recompute_sgr_tag()
+                self._term_retheme_tags()
         if not self._cursor_color_custom:
             self._cursor_set_color(_fg, custom=False)
 
