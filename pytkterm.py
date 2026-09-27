@@ -1160,54 +1160,26 @@ class Terminal(tk.Text):
         else:
             self.insert(index, ch, self._sgr_tag_cache)
 
-    def _grid_row_runs(self, r):
-        """Row r's content as a list of (text, sgr_tag) runs, used to
-        move/copy a row's content (with its formatting) during a scroll
-        region shift (see _grid_scroll_region())."""
-        runs = []
-        text = ""
-        tag = None
-        for kind, value, index in self.dump(f"{r}.0", f"{r}.end", text=True, tag=True):
-            if kind == "text":
-                text += value
-            elif kind == "tagon":
-                if value.startswith("sgr"):
-                    if text:
-                        runs.append((text, tag))
-                        text = ""
-                    tag = value
-            elif kind == "tagoff":
-                if value == tag:
-                    if text:
-                        runs.append((text, tag))
-                        text = ""
-                    tag = None
-        if text:
-            runs.append((text, tag))
-        return runs
-
     def _grid_scroll_region(self, top, bot, up):
         """Scroll rows top..bot by up rows (negative to scroll down),
         filling revealed rows with blanks, without touching rows
-        outside the region (implements DECSTBM scroll regions)."""
-        n = bot - top + 1
-        rows = [self._grid_row_runs(r) for r in range(top, bot + 1)]
-        blank = [(" " * self._GRID_COLS, None)]
-        if up > 0:
-            up = min(up, n)
-            rows = rows[up:] + [blank] * up
-        elif up < 0:
-            down = min(-up, n)
-            rows = [blank] * down + rows[: n - down]
-        else:
+        outside the region (implements DECSTBM scroll regions). Only
+        the rows leaving and entering the region are deleted/inserted;
+        the rows that stay are left alone."""
+        if up == 0:
             return
-        for idx, r in enumerate(range(top, bot + 1)):
-            self.delete(f"{r}.0", f"{r}.end")
-            for text, tag in rows[idx]:
-                if tag is None:
-                    self.insert(f"{r}.end", text)
-                else:
-                    self.insert(f"{r}.end", text, tag)
+        n = bot - top + 1
+        _blank = " " * self._GRID_COLS
+        _k = min(abs(up), n)
+        if _k == n:
+            self.delete(f"{top}.0", f"{bot}.end")
+            self.insert(f"{top}.0", "\n".join([_blank] * n))
+        elif up > 0:
+            self.delete(f"{top}.0", f"{top + _k}.0")
+            self.insert(f"{bot - _k}.end", ("\n" + _blank) * _k)
+        else:
+            self.delete(f"{bot - _k}.end", f"{bot}.end")
+            self.insert(f"{top}.0", (_blank + "\n") * _k)
 
     def _osc_colour_reply(self, which, colour):
         """Reply to an OSC color query (e.g. '\\x1b]10;?\\x1b\\\\' asking
@@ -1380,31 +1352,40 @@ class Terminal(tk.Text):
         gcol = min(max(0, gcol), self._GRID_COLS)
         self.mark_set("insert", f"{row}.{gcol}")
 
-    def _grid_put(self, ch):
-        """Write one character at the cursor and advance it, wrapping
-        to the next line (scrolling if needed) if it runs off the
-        right edge and autowrap is on, or just parking at the last
-        column if not (alt-screen mode)."""
-        row = int(self.index("insert").split(".")[0])
-        gcol = int(self.index("insert").split(".")[1])
-        if gcol >= self._GRID_COLS:
-            if not self._autowrap:
-                gcol = self._GRID_COLS - 1
-                self.mark_set("insert", f"{row}.{gcol}")
-            elif row == self._scroll_bot:
-                self._grid_scroll_region(self._scroll_top, self._scroll_bot, 1)
-                gcol = 0
-                self.mark_set("insert", f"{row}.0")
-            elif row < self._GRID_ROWS:
-                row += 1
-                gcol = 0
-                self.mark_set("insert", f"{row}.0")
+    def _grid_put_run(self, run):
+        """Write a run of printable characters at the cursor and
+        advance it, as one delete and insert per row rather than per
+        character, wrapping to the next line (scrolling if needed) if it
+        runs off the right edge and autowrap is on, or just parking at
+        the last column if not (alt-screen mode)."""
+        while run:
+            row, gcol = (int(_x) for _x in self.index("insert").split("."))
+            if gcol >= self._GRID_COLS:
+                if not self._autowrap:
+                    gcol = self._GRID_COLS - 1
+                    self.mark_set("insert", f"{row}.{gcol}")
+                elif row == self._scroll_bot:
+                    self._grid_scroll_region(self._scroll_top, self._scroll_bot, 1)
+                    gcol = 0
+                    self.mark_set("insert", f"{row}.0")
+                elif row < self._GRID_ROWS:
+                    row += 1
+                    gcol = 0
+                    self.mark_set("insert", f"{row}.0")
+                else:
+                    gcol = self._GRID_COLS - 1
+                    self.mark_set("insert", f"{row}.{gcol}")
+            space = self._GRID_COLS - gcol
+            if len(run) <= space:
+                chunk, run = run, ""
+            elif not self._autowrap:
+                # Everything past the last column overwrites that column.
+                chunk, run = run[: space - 1] + run[-1], ""
             else:
-                gcol = self._GRID_COLS - 1
-                self.mark_set("insert", f"{row}.{gcol}")
-        self.delete(f"{row}.{gcol}", f"{row}.{gcol + 1}")
-        self._term_insert(f"{row}.{gcol}", ch)
-        self.mark_set("insert", f"{row}.{gcol + 1}")
+                chunk, run = run[:space], run[space:]
+            self.delete(f"{row}.{gcol}", f"{row}.{gcol + len(chunk)}")
+            self._term_insert(f"{row}.{gcol}", chunk)
+            self.mark_set("insert", f"{row}.{gcol + len(chunk)}")
 
     def _term_last_real_line(self):
         """The line number of the last line currently in the buffer."""
@@ -1538,7 +1519,7 @@ class Terminal(tk.Text):
         sequence split across two output chunks (e.g. output arriving
         faster than it can be fully read) is buffered in
         self._pending_esc and retried once more data arrives. Ordinary
-        printable characters are written via _grid_put()/_term_insert()
+        printable characters are written via _grid_put_run()/_term_insert()
         with the current SGR tag applied.
         """
         if self._pending_esc:
@@ -2466,15 +2447,15 @@ class Terminal(tk.Text):
                 self.mark_set("insert", f"{self._cur_line}.{col + sp}")
                 i += 1
             elif ch >= " " and ch != "\x7f":
-                if self._alt_mode:
-                    self._grid_put(ch)
-                    self._last_char = ch
-                    i += 1
-                    continue
                 j = i
                 while j < n and text[j] >= " " and text[j] != "\x7f":
                     j += 1
                 run = text[i:j]
+                if self._alt_mode:
+                    self._grid_put_run(run)
+                    self._last_char = run[-1]
+                    i = j
+                    continue
                 i = j
                 if run:
                     self._last_char = run[-1]
