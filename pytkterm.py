@@ -254,17 +254,31 @@ class Terminal(tk.Text):
     # key (used by _key()).
 
     def __init__(
-        self, master, command=None, endmessage=None, nocolor=False, *args, **kwargs
+        self,
+        master,
+        command=None,
+        endmessage=None,
+        nocolor=False,
+        font=monospace,
+        fontsize=12,
+        *args,
+        **kwargs,
     ):
         """command: the argv list to run (None for the user's default
         shell). endmessage: text to show (and wait for a keypress on)
         once the process exits; if falsy, the buffer just closes itself
         instead. nocolor: disable ANSI colors/the blinking cursor
         (used for the embedded Python Shell's terminal, where syntax
-        highlighting draws over it instead)."""
-        kwargs.setdefault("font", (monospace, 12))
+        highlighting draws over it instead). font: the font family name
+        (a string) and fontsize: its size (a number), always used
+        explicitly for the text, the bold/italic variants and the
+        cell size."""
+        kwargs["font"] = (font, fontsize)
         kwargs.setdefault("wrap", "none")
         super().__init__(master, *args, **kwargs)
+        self._term_font_name = font
+        self._term_font_size = fontsize
+        self._term_font = tkfont.Font(family=font, size=fontsize)
         self._pending_after_ids = set()
         import queue as _queue
 
@@ -294,7 +308,7 @@ class Terminal(tk.Text):
             background=self._cursor_color,
             foreground=self._term_default_bg,
             text="",
-            font=self.cget("font"),
+            font=(self._term_font_name, self._term_font_size),
             borderwidth=0,
             highlightthickness=0,
             padx=0,
@@ -662,13 +676,8 @@ class Terminal(tk.Text):
         to convert the widget's pixel size to a column/row grid size."""
         if self.charwidth is not None:
             return
-        _top = self.index("@0,0")
-        super().insert(_top, " ")
-        box = super().bbox(_top)
-        super().delete(_top, f"{_top}+1c")
-        if box:
-            self.charwidth = max(1, box[2])
-            self.charheight = max(1, box[3])
+        self.charwidth = max(1, self._term_font.measure(" "))
+        self.charheight = max(1, self._term_font.metrics("linespace"))
 
     def _term_start_process(self):
         """Size the grid, then spawn the subprocess attached to a PTY
@@ -1063,17 +1072,17 @@ class Terminal(tk.Text):
         self._blink_after_id = self.after(500, self._blink_tick)
 
     def _term_font_variant(self, bold=False, italic=False):
-        """A font with this terminal's current font (family, size, ...)
-        but bold and/or italic. Cached so the Font object stays alive
+        """A font with this terminal's font family and size but bold
+        and/or italic. Cached so the Font object stays alive
         for as long as tags use it."""
         key = (bold, italic)
         if key not in self._sgr_fonts:
-            variant = tkfont.Font(font=self.cget("font"))
-            if bold:
-                variant.configure(weight="bold")
-            if italic:
-                variant.configure(slant="italic")
-            self._sgr_fonts[key] = variant
+            self._sgr_fonts[key] = tkfont.Font(
+                family=self._term_font_name,
+                size=self._term_font_size,
+                weight="bold" if bold else "normal",
+                slant="italic" if italic else "roman",
+            )
         return self._sgr_fonts[key]
 
     def _recompute_sgr_tag(self):

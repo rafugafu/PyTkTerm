@@ -2,12 +2,14 @@
 This is a full, real, standalone terminal emulator inside a tkinter `Text` widget. It is the same as [PyNotes'](https://github.com/rafugafu/pynotes) integrated terminal, with a few modifications to make it completely standalone (removed `utils.show` messages and some references to `state`), affecting no behavior.  
 # Specifications  
 ## Constructor  
-`Terminal(master, command=None, endmessage=None, nocolor=False, *args, **kwargs)`  
+`Terminal(master, command=None, endmessage=None, nocolor=False, font=monospace, fontsize=12, *args, **kwargs)`  
 - `master`: the parent tkinter widget.  
 - `command`: a list of argv to run in place of the shell, for example `['ssh', 'host']`. Pass `None` to launch the default shell (`$SHELL` on Linux, `powershell.exe` on Windows).  
 - `endmessage`: text appended to the widget and shown once the child process exits. Once it is shown, the widget stops forwarding keypresses to the child (there is none left) and instead treats any keypress as a request to tear down the pty/process and fire `<<TerminalStopped>>`; the widget itself is not destroyed, only cleaned up, and stays visible showing its final contents unless something bound to `<<TerminalStopped>>` destroys it. Pass `None` to skip the message and run that same teardown (firing `<<TerminalStopped>>`) automatically as soon as the child process exits, with no keypress needed.  
 - `nocolor`: when `True`, disables ANSI SGR color/style rendering and cursor color escapes, keeping only plain text with cursor movement and editing.  
-- `*args, **kwargs`: forwarded to `tkinter.Text`, so any `Text` option works (`background`, `foreground`, `font`, etc). `font` defaults to `(monospace, 12)` and `wrap` defaults to `'none'`.  
+- `font`: the font family name, as a string. Defaults to `'monospace'` (`'Courier'` on Windows). It is always used explicitly, for the plain text, the bold/italic variants, the cursor and the character cell size, and never read back from the widget.  
+- `fontsize`: the font size, as a number. Defaults to `12`. Used together with `font` in the same way.  
+- `*args, **kwargs`: forwarded to `tkinter.Text`, so any `Text` option works (`background`, `foreground`, etc). Use the `font` and `fontsize` parameters instead of the `Text` `font` option. `wrap` defaults to `'none'`.  
 ## Terminal Capabilities  
 - Spawns the child process on a real pty on Linux (via `pty.openpty`) or `winpty` on Windows, and keeps the pty's window size in sync with the widget's size.  
 - Supports a VT100/xterm-compatible escape sequence subset: cursor movement (CUU/CUD/CUF/CUB/CUP/HVP/CNL/CPL/CHA/VPA), save/restore cursor (`ESC 7`/`ESC 8`, CSI `s`/`u`), erase in line/display (EL, ED, modes 0-3), insert/delete character and line (`@`, `P`, `L`, `M`), scroll up/down (`S`, `T`), erase character (`X`), repeat character (`b`), scrolling regions (DECSTBM), tab stops (HTS/TBC), device status report and device attributes queries, and full reset (`RIS`).  
