@@ -18,6 +18,7 @@ import base64
 import re
 import threading
 import time
+import unicodedata
 import tkinter as tk
 import tkinter.font as tkfont
 
@@ -199,6 +200,41 @@ def _sgr_colour_hex(c):
     return _ansi_256_hex(c)
 
 
+def _term_char_width(ch):
+    """A character's terminal column width: 0 for a combining mark
+    (rendered stacked onto the previous cell, not given one of its
+    own), 2 for an East Asian wide/fullwidth character, 1 otherwise.
+    Needed because the Text widget indexes by raw character, which
+    only matches terminal columns when every character is width 1."""
+    if unicodedata.category(ch) in ("Mn", "Me", "Cf"):
+        return 0
+    if unicodedata.east_asian_width(ch) in ("W", "F"):
+        return 2
+    return 1
+
+
+def _term_split_run(run, space):
+    """Split off the longest prefix of run that fits within `space`
+    terminal columns (counting character widths via
+    _term_char_width()), returning (prefix, rest, prefix's width).
+    Always consumes at least one character when run isn't empty, even
+    if that character (e.g. a wide one) doesn't actually fit, so a
+    caller looping on the remainder can't stall."""
+    width = 0
+    i = 0
+    n = len(run)
+    while i < n:
+        w = _term_char_width(run[i])
+        if width + w > space:
+            if i == 0:
+                i = 1
+                width = w
+            break
+        width += w
+        i += 1
+    return run[:i], run[i:], width
+
+
 def _term_sgr_resolve(state, default_fg, default_bg):
     """Resolve an SGR state to the actual (fg, bg) hex colors to draw
     with, applying bold-brightens-color, reverse video, and conceal."""
@@ -348,6 +384,7 @@ class Terminal(tk.Text):
         self._mouse_mode = 0
         self._mouse_sgr = False
         self._mouse_last_pos = None
+        self._mouse_bypass = False
         self.tag_configure(
             "sel", background=self._term_default_fg, foreground=self._term_default_bg
         )
@@ -781,11 +818,11 @@ class Terminal(tk.Text):
         if self._alt_mode:
             actual_rows = self._term_last_real_line()
             for ln in range(1, min(actual_rows, rows) + 1):
-                line = self.get(f"{ln}.0", f"{ln}.end")
-                if len(line) > cols:
-                    self.delete(f"{ln}.{cols}", f"{ln}.end")
-                elif len(line) < cols:
-                    self.insert(f"{ln}.end", " " * (cols - len(line)))
+                width = self._term_col_width(ln)
+                if width > cols:
+                    self.delete(f"{ln}.{self._term_col_to_index(ln, cols)}", f"{ln}.end")
+                elif width < cols:
+                    self.insert(f"{ln}.end", " " * (cols - width))
             if rows > actual_rows:
                 # The alt-screen text has no trailing newline, so every new
                 # row needs its own leading one or the first would be glued
@@ -965,6 +1002,7 @@ class Terminal(tk.Text):
         self._mouse_mode = 0
         self._mouse_sgr = False
         self._mouse_last_pos = None
+        self._mouse_bypass = False
         self._alt_saved = None
         self._alt_mode = False
         self.setcursortype("block")
@@ -1347,25 +1385,60 @@ class Terminal(tk.Text):
             self._vt_sync()
             self.mark_set("insert", f"{self._cur_line}.0")
 
-    def _grid_goto(self, row, gcol):
-        """Move the cursor to (row, gcol), clamped to the grid (alt
-        screen coordinates)."""
+    def _term_col_width(self, row):
+        """The total terminal-column width of row's current content
+        (which can be less than its raw character count, since a
+        combining mark adds a character without adding a column)."""
+        return sum(_term_char_width(c) for c in self.get(f"{row}.0", f"{row}.end"))
+
+    def _term_col_to_index(self, row, col):
+        """The buffer character offset on row where terminal column
+        col begins, walking row's actual content so a combining mark
+        or wide character already in it doesn't throw off later
+        column-based addressing (CUP, erase, insert/delete character,
+        ...). If col falls past row's current content, returns its
+        current length, same as addressing straight off the end."""
+        if col <= 0:
+            return 0
+        text = self.get(f"{row}.0", f"{row}.end")
+        c = 0
+        for i, ch in enumerate(text):
+            if c >= col:
+                return i
+            c += _term_char_width(ch)
+        return len(text)
+
+    def _term_index_to_col(self, row, index):
+        """The terminal column that buffer character offset index on
+        row corresponds to (the inverse of _term_col_to_index())."""
+        return sum(_term_char_width(c) for c in self.get(f"{row}.0", f"{row}.{index}"))
+
+    def _grid_goto(self, row, col):
+        """Move the cursor to terminal column col of row row, clamped
+        to the grid (alt screen coordinates), translating col to the
+        row's actual buffer offset (see _term_col_to_index())."""
         row = min(max(1, row), self._GRID_ROWS)
-        gcol = min(max(0, gcol), self._GRID_COLS)
-        self.mark_set("insert", f"{row}.{gcol}")
+        col = min(max(0, col), self._GRID_COLS)
+        self.mark_set("insert", f"{row}.{self._term_col_to_index(row, col)}")
 
     def _grid_put_run(self, run):
         """Write a run of printable characters at the cursor and
         advance it, as one delete and insert per row rather than per
         character, wrapping to the next line (scrolling if needed) if it
         runs off the right edge and autowrap is on, or just parking at
-        the last column if not (alt-screen mode)."""
+        the last column if not (alt-screen mode). Characters are
+        measured by terminal column width (a combining mark adds no
+        column, an East Asian wide character adds two), not raw count,
+        so the cursor ends up where the app itself believes it is."""
         while run:
-            row, gcol = (int(_x) for _x in self.index("insert").split("."))
+            row = int(self.index("insert").split(".")[0])
+            gcol = self._term_index_to_col(
+                row, int(self.index("insert").split(".")[1])
+            )
             if gcol >= self._GRID_COLS:
                 if not self._autowrap:
                     gcol = self._GRID_COLS - 1
-                    self.mark_set("insert", f"{row}.{gcol}")
+                    self._grid_goto(row, gcol)
                 elif row == self._scroll_bot:
                     self._grid_scroll_region(self._scroll_top, self._scroll_bot, 1)
                     gcol = 0
@@ -1376,18 +1449,22 @@ class Terminal(tk.Text):
                     self.mark_set("insert", f"{row}.0")
                 else:
                     gcol = self._GRID_COLS - 1
-                    self.mark_set("insert", f"{row}.{gcol}")
+                    self._grid_goto(row, gcol)
             space = self._GRID_COLS - gcol
-            if len(run) <= space:
-                chunk, run = run, ""
-            elif not self._autowrap:
-                # Everything past the last column overwrites that column.
-                chunk, run = run[: space - 1] + run[-1], ""
+            if not self._autowrap:
+                chunk, _rest, _w = _term_split_run(run, space)
+                if _rest:
+                    # Everything past the last column overwrites it.
+                    chunk = _term_split_run(run, max(0, space - 1))[0] + run[-1]
+                run = ""
             else:
-                chunk, run = run[:space], run[space:]
-            self.delete(f"{row}.{gcol}", f"{row}.{gcol + len(chunk)}")
-            self._term_insert(f"{row}.{gcol}", chunk)
-            self.mark_set("insert", f"{row}.{gcol + len(chunk)}")
+                chunk, run, _w = _term_split_run(run, space)
+            _chunk_w = sum(_term_char_width(c) for c in chunk)
+            _gidx = self._term_col_to_index(row, gcol)
+            _eidx = self._term_col_to_index(row, gcol + _chunk_w)
+            self.delete(f"{row}.{_gidx}", f"{row}.{_eidx}")
+            self._term_insert(f"{row}.{_gidx}", chunk)
+            self.mark_set("insert", f"{row}.{_gidx + len(chunk)}")
 
     def _term_last_real_line(self):
         """The line number of the last line currently in the buffer."""
@@ -1428,13 +1505,15 @@ class Terminal(tk.Text):
             self.mark_set("insert", _ins)
 
     def _term_goto(self, _gl, _gc):
-        """(Primary screen) move the cursor to column _gc of line _gl,
-        padding the line with spaces first if it's currently shorter
-        (primary-screen lines aren't pre-padded to the grid width)."""
-        _ll = int(self.index(f"{_gl}.end").split(".")[1])
-        if _gc > _ll:
-            self.insert(f"{_gl}.end", " " * (_gc - _ll))
-        self.mark_set("insert", f"{_gl}.{_gc}")
+        """(Primary screen) move the cursor to terminal column _gc of
+        line _gl, padding the line with spaces first if it's
+        currently narrower (primary-screen lines aren't pre-padded to
+        the grid width), translating _gc to the line's actual buffer
+        offset (see _term_col_to_index())."""
+        _llw = self._term_col_width(_gl)
+        if _gc > _llw:
+            self.insert(f"{_gl}.end", " " * (_gc - _llw))
+        self.mark_set("insert", f"{_gl}.{self._term_col_to_index(_gl, _gc)}")
 
     def _primary_scroll_up(self):
         """(Primary screen) scroll the scroll region up one line: if
@@ -1555,7 +1634,9 @@ class Terminal(tk.Text):
             elif ch == "\n" or ch == "\x0b" or ch == "\x0c":
                 if self._alt_mode:
                     ln = int(self.index("insert").split(".")[0])
-                    gcol = int(self.index("insert").split(".")[1])
+                    gcol = self._term_index_to_col(
+                        ln, int(self.index("insert").split(".")[1])
+                    )
                     if ln >= self._scroll_bot:
                         self._grid_scroll_region(self._scroll_top, self._scroll_bot, 1)
                         self._grid_goto(self._scroll_bot, gcol)
@@ -1563,7 +1644,9 @@ class Terminal(tk.Text):
                         self._grid_goto(ln + 1, gcol)
                     i += 1
                     continue
-                c = int(self.index("insert").split(".")[1])
+                c = self._term_index_to_col(
+                    self._cur_line, int(self.index("insert").split(".")[1])
+                )
                 _srow = self._cur_line - self.screen_top + 1
                 if (
                     self._scroll_top > 1 or self._scroll_bot < self._VT_ROWS
@@ -1573,7 +1656,7 @@ class Terminal(tk.Text):
                     self.tag_remove(
                         "wrapcont", f"{self._cur_line - 1}.end", f"{self._cur_line}.0"
                     )
-                    self.mark_set("insert", f"{self._cur_line}.{c}")
+                    self._term_goto(self._cur_line, c)
                     i += 1
                     continue
                 self._cur_line += 1
@@ -1607,25 +1690,36 @@ class Terminal(tk.Text):
                         )
                         p = [int(x) if x else 0 for x in ps.split(";")] if ps else [0]
                         ln = self.index("insert").split(".")[0]
-                        col = self.index("insert").split(".")[1]
+                        # col is the cursor's terminal column (not its
+                        # raw buffer offset, which can run ahead of it
+                        # once the row has a combining mark in it).
+                        col = self._term_index_to_col(
+                            ln, int(self.index("insert").split(".")[1])
+                        )
                         if cmd == "K":
                             if self._alt_mode:
-                                gcol = int(col)
+                                gcol = col
+                                _gidx = self._term_col_to_index(ln, gcol)
                                 _kfill = self._term_erase_fill_tag()
                                 if p[0] == 0:
-                                    self.delete(f"{ln}.{gcol}", f"{ln}.end")
+                                    self.delete(f"{ln}.{_gidx}", f"{ln}.end")
                                     self.insert(
-                                        f"{ln}.{gcol}",
+                                        f"{ln}.{_gidx}",
                                         " " * (self._GRID_COLS - gcol),
                                         _kfill if _kfill is not None else "",
                                     )
+                                    self.mark_set("insert", f"{ln}.{_gidx}")
                                 elif p[0] == 1:
-                                    self.delete(f"{ln}.0", f"{ln}.{gcol}")
+                                    self.delete(f"{ln}.0", f"{ln}.{_gidx}")
                                     self.insert(
                                         f"{ln}.0",
                                         " " * gcol,
                                         _kfill if _kfill is not None else "",
                                     )
+                                    # The newly-blanked prefix is exactly
+                                    # gcol spaces, so gcol is already the
+                                    # right raw offset here.
+                                    self.mark_set("insert", f"{ln}.{gcol}")
                                 else:
                                     self.delete(f"{ln}.0", f"{ln}.end")
                                     self.insert(
@@ -1633,7 +1727,7 @@ class Terminal(tk.Text):
                                         " " * self._GRID_COLS,
                                         _kfill if _kfill is not None else "",
                                     )
-                                self.mark_set("insert", f"{ln}.{gcol}")
+                                    self.mark_set("insert", f"{ln}.{gcol}")
                             else:
                                 _efill = self._term_erase_fill_tag()
                                 if p[0] == 0:
@@ -1641,15 +1735,19 @@ class Terminal(tk.Text):
                                     if _efill is not None:
                                         self.insert(
                                             "insert",
-                                            " " * (self._GRID_COLS - int(col)),
+                                            " " * (self._GRID_COLS - col),
                                             _efill,
                                         )
-                                        self.mark_set("insert", f"{ln}.{col}")
+                                        self.mark_set(
+                                            "insert",
+                                            f"{ln}.{self._term_col_to_index(ln, col)}",
+                                        )
                                 elif p[0] == 1:
-                                    self.delete(f"{ln}.0", f"{ln}.{int(col) + 1}")
+                                    _bidx = self._term_col_to_index(ln, col + 1)
+                                    self.delete(f"{ln}.0", f"{ln}.{_bidx}")
                                     self.insert(
                                         f"{ln}.0",
-                                        " " * (int(col) + 1),
+                                        " " * (col + 1),
                                         _efill if _efill is not None else "",
                                     )
                                     self.mark_set("insert", f"{ln}.{col}")
@@ -1659,15 +1757,16 @@ class Terminal(tk.Text):
                                         self.insert(
                                             f"{ln}.0", " " * self._GRID_COLS, _efill
                                         )
-                                    self._term_goto(int(ln), int(col))
+                                    self._term_goto(int(ln), col)
                         elif cmd == "J":
                             if self._alt_mode:
-                                gcol = int(col)
+                                gcol = col
                                 _jfill = self._term_erase_fill_tag()
                                 if p[0] == 0:
-                                    self.delete(f"{ln}.{gcol}", f"{ln}.end")
+                                    _gidx = self._term_col_to_index(ln, gcol)
+                                    self.delete(f"{ln}.{_gidx}", f"{ln}.end")
                                     self.insert(
-                                        f"{ln}.{gcol}",
+                                        f"{ln}.{_gidx}",
                                         " " * (self._GRID_COLS - gcol),
                                         _jfill if _jfill is not None else "",
                                     )
@@ -1680,8 +1779,10 @@ class Terminal(tk.Text):
                                                 " " * self._GRID_COLS,
                                                 _jfill if _jfill is not None else "",
                                             )
+                                    _final = _gidx
                                 elif p[0] == 1:
-                                    self.delete(f"{ln}.0", f"{ln}.{gcol + 1}")
+                                    _bidx = self._term_col_to_index(ln, gcol + 1)
+                                    self.delete(f"{ln}.0", f"{ln}.{_bidx}")
                                     self.insert(
                                         f"{ln}.0",
                                         " " * (gcol + 1),
@@ -1696,6 +1797,10 @@ class Terminal(tk.Text):
                                                 _jfill if _jfill is not None else "",
                                             )
                                             self.insert(f"1.{self._GRID_COLS}", "\n")
+                                    # The newly-blanked prefix is exactly
+                                    # gcol spaces, so gcol is already the
+                                    # right raw offset here.
+                                    _final = gcol
                                 else:
                                     self.delete("1.0", "end")
                                     for _er in range(self._GRID_ROWS):
@@ -1706,9 +1811,11 @@ class Terminal(tk.Text):
                                             " " * self._GRID_COLS,
                                             _jfill if _jfill is not None else "",
                                         )
-                                self.mark_set("insert", f"{ln}.{gcol}")
+                                    # The whole row is now blank spaces.
+                                    _final = gcol
+                                self.mark_set("insert", f"{ln}.{_final}")
                             elif p[0] == 2:
-                                cur_col = int(col)
+                                cur_col = col
                                 _pbb = self.screen_top + self._VT_ROWS - 1
                                 _nonblank = 0
                                 for _pr in range(self.screen_top, _pbb + 1):
@@ -1743,13 +1850,17 @@ class Terminal(tk.Text):
                                     self.delete("1.0", f"{self.screen_top}.0")
                                     self._cur_line = max(1, self._cur_line - del_n)
                                     self.screen_top = 1
-                                    self.mark_set("insert", f"{self._cur_line}.{col}")
+                                    self.mark_set(
+                                        "insert",
+                                        f"{self._cur_line}."
+                                        f"{self._term_col_to_index(self._cur_line, col)}",
+                                    )
                                 # With the scrollback gone there is nothing
                                 # to scroll back to, so follow the bottom again.
                                 self._follow_bottom = True
                             elif p[0] == 1:
                                 _il = int(ln)
-                                _ic = int(col)
+                                _ic = col
                                 _efill = self._term_erase_fill_tag()
                                 for _er in range(self.screen_top, _il):
                                     self.delete(f"{_er}.0", f"{_er}.end")
@@ -1757,17 +1868,21 @@ class Terminal(tk.Text):
                                         self.insert(
                                             f"{_er}.0", " " * self._GRID_COLS, _efill
                                         )
-                                self.delete(f"{_il}.0", f"{_il}.{_ic + 1}")
+                                _bidx = self._term_col_to_index(_il, _ic + 1)
+                                self.delete(f"{_il}.0", f"{_il}.{_bidx}")
                                 self.insert(
                                     f"{_il}.0",
                                     " " * (_ic + 1),
                                     _efill if _efill is not None else "",
                                 )
+                                # The newly-blanked prefix is exactly _ic+1
+                                # spaces, so _ic is already the right raw
+                                # offset here.
                                 self.mark_set("insert", f"{_il}.{_ic}")
                             elif p[0] == 0:
                                 _bb = self.screen_top + self._VT_ROWS - 1
                                 _efill = self._term_erase_fill_tag()
-                                _ec = int(self.index("insert").split(".")[1])
+                                _ec = col
                                 self.delete("insert", f"{self._cur_line}.end")
                                 if _efill is not None:
                                     _eins = self.index("insert")
@@ -1798,14 +1913,7 @@ class Terminal(tk.Text):
                                     self.screen_top + self._origin_row(row_) - 1
                                 )
                                 self._vt_sync()
-                                ll = int(
-                                    self.index(f"{self._cur_line}.end").split(".")[1]
-                                )
-                                if col_ - 1 > ll:
-                                    self.insert(
-                                        f"{self._cur_line}.end", " " * (col_ - 1 - ll)
-                                    )
-                                self.mark_set("insert", f"{self._cur_line}.{col_ - 1}")
+                                self._term_goto(self._cur_line, col_ - 1)
                         elif cmd == "A":
                             mv = p[0] or 1
                             if self._alt_mode:
@@ -1825,15 +1933,14 @@ class Terminal(tk.Text):
                                 self._term_goto(self._cur_line, int(col))
                         elif cmd == "C":
                             mv = p[0] or 1
-                            _tc = min(int(col) + mv, self._GRID_COLS - 1)
-                            if not self._alt_mode:
-                                ll = int(self.index(f"{ln}.end").split(".")[1])
-                                if _tc > ll:
-                                    self.insert(f"{ln}.end", " " * (_tc - ll))
-                            self.mark_set("insert", f"{ln}.{_tc}")
+                            _tc = min(col + mv, self._GRID_COLS - 1)
+                            if self._alt_mode:
+                                self._grid_goto(int(ln), _tc)
+                            else:
+                                self._term_goto(ln, _tc)
                         elif cmd == "D":
                             mv = p[0] or 1
-                            self._term_goto(int(ln), max(0, int(col) - mv))
+                            self._term_goto(int(ln), max(0, col - mv))
                         elif cmd == "E":
                             mv = p[0] or 1
                             if self._alt_mode:
@@ -1851,19 +1958,28 @@ class Terminal(tk.Text):
                                 self.mark_set("insert", f"{self._cur_line}.0")
                         elif cmd == "s" and not _private:
                             if self._alt_mode:
-                                self._saved_cursor = self.index("insert")
+                                self._saved_cursor = ("a", int(ln), col)
                             else:
                                 self._saved_cursor = (
+                                    "p",
                                     self._cur_line - self.screen_top,
-                                    int(col),
+                                    col,
                                 )
                         elif cmd == "u" and not _private:
-                            if self._alt_mode and isinstance(self._saved_cursor, str):
-                                self.mark_set("insert", self._saved_cursor)
-                            elif not self._alt_mode and isinstance(
-                                self._saved_cursor, tuple
+                            if (
+                                self._alt_mode
+                                and isinstance(self._saved_cursor, tuple)
+                                and self._saved_cursor[0] == "a"
                             ):
-                                _sr, _sc = self._saved_cursor
+                                self._grid_goto(
+                                    self._saved_cursor[1], self._saved_cursor[2]
+                                )
+                            elif (
+                                not self._alt_mode
+                                and isinstance(self._saved_cursor, tuple)
+                                and self._saved_cursor[0] == "p"
+                            ):
+                                _, _sr, _sc = self._saved_cursor
                                 self._cur_line = self.screen_top + min(
                                     _sr, self._VT_ROWS - 1
                                 )
@@ -1874,14 +1990,7 @@ class Terminal(tk.Text):
                             if self._alt_mode:
                                 self._grid_goto(int(ln), mv - 1)
                             else:
-                                ll = int(
-                                    self.index(f"{self._cur_line}.end").split(".")[1]
-                                )
-                                if mv - 1 > ll:
-                                    self.insert(
-                                        f"{self._cur_line}.end", " " * (mv - 1 - ll)
-                                    )
-                                self.mark_set("insert", f"{self._cur_line}.{mv - 1}")
+                                self._term_goto(self._cur_line, mv - 1)
                         elif cmd == "g":
                             if p[0] == 0:
                                 self._tab_stops.discard(int(col))
@@ -1899,20 +2008,17 @@ class Terminal(tk.Text):
                                 self._term_goto(self._cur_line, int(col))
                         elif cmd == "P":
                             mv = p[0] or 1
-                            _pend = f"insert+{mv}c"
-                            if self.compare(_pend, ">", f"{ln}.end"):
-                                _pend = f"{ln}.end"
-                            self.delete("insert", _pend)
+                            self.delete("insert", f"{ln}.{self._term_col_to_index(ln, col + mv)}")
                             if self._alt_mode:
                                 # Rows on the alt screen are always exactly
-                                # _GRID_COLS wide, so blank cells fill in
-                                # from the right margin.
+                                # _GRID_COLS columns wide, so blank cells
+                                # fill in from the right margin.
                                 _pfill = self._term_erase_fill_tag()
-                                _plen = int(self.index(f"{ln}.end").split(".")[1])
-                                if _plen < self._GRID_COLS:
+                                _pwidth = self._term_col_width(ln)
+                                if _pwidth < self._GRID_COLS:
                                     self.insert(
                                         f"{ln}.end",
-                                        " " * (self._GRID_COLS - _plen),
+                                        " " * (self._GRID_COLS - _pwidth),
                                         _pfill if _pfill is not None else "",
                                     )
                         elif cmd == "@":
@@ -1921,7 +2027,10 @@ class Terminal(tk.Text):
                             if self._alt_mode:
                                 # Characters pushed past the right margin
                                 # are lost, not kept in an overlong row.
-                                self.delete(f"{ln}.{self._GRID_COLS}", f"{ln}.end")
+                                self.delete(
+                                    f"{ln}.{self._term_col_to_index(ln, self._GRID_COLS)}",
+                                    f"{ln}.end",
+                                )
                         elif cmd == "L":
                             if self._alt_mode:
                                 r0 = int(ln)
@@ -1996,7 +2105,7 @@ class Terminal(tk.Text):
                                 _rtop = self.screen_top + self._scroll_top - 1
                                 _bot = self.screen_top + self._scroll_bot - 1
                                 _n = min(p[0] or 1, _bot - _rtop + 1)
-                                _scol = int(self.index("insert").split(".")[1])
+                                _scol = col
                                 if (
                                     self._scroll_top == 1
                                     and self._scroll_bot == self._VT_ROWS
@@ -2022,7 +2131,7 @@ class Terminal(tk.Text):
                                                 " " * self._GRID_COLS,
                                                 _sfill,
                                             )
-                                self.mark_set("insert", f"{self._cur_line}.{_scol}")
+                                self._term_goto(self._cur_line, _scol)
                         elif cmd == "T":
                             if self._alt_mode:
                                 self._grid_scroll_region(
@@ -2034,7 +2143,7 @@ class Terminal(tk.Text):
                                 _n = min(p[0] or 1, _bot - _rtop + 1)
                                 _last = self._term_last_real_line()
                                 _tfill = self._term_erase_fill_tag()
-                                _tcol = int(self.index("insert").split(".")[1])
+                                _tcol = col
                                 if _last < _bot:
                                     self.insert("end", "\n" * (_bot - _last))
                                 self.delete(
@@ -2046,7 +2155,7 @@ class Terminal(tk.Text):
                                         self.insert(
                                             f"{_sl}.0", " " * self._GRID_COLS, _tfill
                                         )
-                                self.mark_set("insert", f"{self._cur_line}.{_tcol}")
+                                self._term_goto(self._cur_line, _tcol)
                         elif cmd == "r":
                             if len(p) >= 2:
                                 self._scroll_top = min(
@@ -2064,27 +2173,29 @@ class Terminal(tk.Text):
                             mv = p[0] or 1
                             _xfill = self._term_erase_fill_tag()
                             if self._alt_mode:
-                                gcol = int(col)
+                                gcol = col
                                 endc = min(gcol + mv, self._GRID_COLS)
-                                self.delete(f"{ln}.{gcol}", f"{ln}.{endc}")
+                                _gidx = self._term_col_to_index(ln, gcol)
+                                _eidx = self._term_col_to_index(ln, endc)
+                                self.delete(f"{ln}.{_gidx}", f"{ln}.{_eidx}")
                                 self.insert(
-                                    f"{ln}.{gcol}",
+                                    f"{ln}.{_gidx}",
                                     " " * (endc - gcol),
                                     _xfill if _xfill is not None else "",
                                 )
-                                self.mark_set("insert", f"{ln}.{gcol}")
+                                self.mark_set("insert", f"{ln}.{_gidx}")
                             else:
-                                _x0 = int(col)
-                                _xll = int(self.index(f"{ln}.end").split(".")[1])
-                                self.delete(
-                                    f"{ln}.{_x0}", f"{ln}.{min(_x0 + mv, _xll)}"
-                                )
+                                _x0 = col
+                                _xw = self._term_col_width(ln)
+                                _idx0 = self._term_col_to_index(ln, _x0)
+                                _idx1 = self._term_col_to_index(ln, min(_x0 + mv, _xw))
+                                self.delete(f"{ln}.{_idx0}", f"{ln}.{_idx1}")
                                 self.insert(
-                                    f"{ln}.{_x0}",
+                                    f"{ln}.{_idx0}",
                                     " " * mv,
                                     _xfill if _xfill is not None else "",
                                 )
-                                self.mark_set("insert", f"{ln}.{_x0}")
+                                self.mark_set("insert", f"{ln}.{_idx0}")
                         elif m.group(2) == "c" and not _private:
                             try:
                                 if _prefix.startswith(">"):
@@ -2115,7 +2226,10 @@ class Terminal(tk.Text):
                                 self._cursor_set_blink_enabled(_cs == 5)
                         elif cmd == "n":
                             if p[0] == 6:
-                                cur_col = int(self.index("insert").split(".")[1])
+                                cur_col = self._term_index_to_col(
+                                    self._cur_line,
+                                    int(self.index("insert").split(".")[1]),
+                                )
                                 row_rep = max(1, self._cur_line - self.screen_top + 1)
                                 try:
                                     self._write(
@@ -2237,7 +2351,9 @@ class Terminal(tk.Text):
                 elif nxt == "M":
                     if self._alt_mode:
                         cl = int(self.index("insert").split(".")[0])
-                        co = self.index("insert").split(".")[1]
+                        co = self._term_index_to_col(
+                            cl, int(self.index("insert").split(".")[1])
+                        )
                         if cl <= self._scroll_top:
                             # Reverse index at the top of the scroll region
                             # scrolls the region down instead of just
@@ -2245,20 +2361,20 @@ class Terminal(tk.Text):
                             self._grid_scroll_region(
                                 self._scroll_top, self._scroll_bot, -1
                             )
-                            self.mark_set("insert", f"{self._scroll_top}.{co}")
+                            self._grid_goto(self._scroll_top, co)
                         else:
-                            self.mark_set(
-                                "insert", f"{max(self._scroll_top, cl - 1)}.{co}"
-                            )
+                            self._grid_goto(max(self._scroll_top, cl - 1), co)
                     else:
-                        co = int(self.index("insert").split(".")[1])
+                        co = self._term_index_to_col(
+                            self._cur_line, int(self.index("insert").split(".")[1])
+                        )
                         _srow = self._cur_line - self.screen_top + 1
                         if (
                             self._scroll_top > 1 or self._scroll_bot < self._VT_ROWS
                         ) and _srow == self._scroll_top:
                             self._primary_scroll_down()
                             self._cur_line = self.screen_top + self._scroll_top - 1
-                            self.mark_set("insert", f"{self._cur_line}.{co}")
+                            self._term_goto(self._cur_line, co)
                             i += 2
                             continue
                         if (
@@ -2276,7 +2392,9 @@ class Terminal(tk.Text):
                 elif nxt == "D":
                     if self._alt_mode:
                         cl = int(self.index("insert").split(".")[0])
-                        co = self.index("insert").split(".")[1]
+                        co = self._term_index_to_col(
+                            cl, int(self.index("insert").split(".")[1])
+                        )
                         if cl >= self._scroll_bot:
                             # Index at the bottom of the scroll region
                             # scrolls the region up instead of just
@@ -2284,18 +2402,20 @@ class Terminal(tk.Text):
                             self._grid_scroll_region(
                                 self._scroll_top, self._scroll_bot, 1
                             )
-                            self.mark_set("insert", f"{self._scroll_bot}.{co}")
+                            self._grid_goto(self._scroll_bot, co)
                         else:
-                            self.mark_set("insert", f"{cl + 1}.{co}")
+                            self._grid_goto(cl + 1, co)
                     else:
-                        co = int(self.index("insert").split(".")[1])
+                        co = self._term_index_to_col(
+                            self._cur_line, int(self.index("insert").split(".")[1])
+                        )
                         _srow = self._cur_line - self.screen_top + 1
                         if (
                             self._scroll_top > 1 or self._scroll_bot < self._VT_ROWS
                         ) and _srow == self._scroll_bot:
                             self._primary_scroll_up()
                             self._cur_line = self.screen_top + self._scroll_bot - 1
-                            self.mark_set("insert", f"{self._cur_line}.{co}")
+                            self._term_goto(self._cur_line, co)
                             i += 2
                             continue
                         self._cur_line += 1
@@ -2388,19 +2508,36 @@ class Terminal(tk.Text):
                     i += 2
                 elif nxt == "7":
                     if self._alt_mode:
-                        self._saved_cursor = self.index("insert")
+                        _scl, _sidx = self.index("insert").split(".")
+                        self._saved_cursor = (
+                            "a",
+                            int(_scl),
+                            self._term_index_to_col(_scl, int(_sidx)),
+                        )
                     else:
                         self._saved_cursor = (
+                            "p",
                             self._cur_line - self.screen_top,
-                            int(self.index("insert").split(".")[1]),
+                            self._term_index_to_col(
+                                self._cur_line,
+                                int(self.index("insert").split(".")[1]),
+                            ),
                         )
                     self._saved_sgr = dict(self._sgr_state)
                     i += 2
                 elif nxt == "8":
-                    if self._alt_mode and isinstance(self._saved_cursor, str):
-                        self.mark_set("insert", self._saved_cursor)
-                    elif not self._alt_mode and isinstance(self._saved_cursor, tuple):
-                        _sr, _sc = self._saved_cursor
+                    if (
+                        self._alt_mode
+                        and isinstance(self._saved_cursor, tuple)
+                        and self._saved_cursor[0] == "a"
+                    ):
+                        self._grid_goto(self._saved_cursor[1], self._saved_cursor[2])
+                    elif (
+                        not self._alt_mode
+                        and isinstance(self._saved_cursor, tuple)
+                        and self._saved_cursor[0] == "p"
+                    ):
+                        _, _sr, _sc = self._saved_cursor
                         self._cur_line = self.screen_top + min(_sr, self._VT_ROWS - 1)
                         self._vt_sync()
                         self._term_goto(self._cur_line, _sc)
@@ -2410,7 +2547,8 @@ class Terminal(tk.Text):
                             self._recompute_sgr_tag()
                     i += 2
                 elif nxt == "H":
-                    self._tab_stops.add(int(self.index("insert").split(".")[1]))
+                    _hln, _hidx = self.index("insert").split(".")
+                    self._tab_stops.add(self._term_index_to_col(_hln, int(_hidx)))
                     i += 2
                 elif nxt == "\x1b":
                     i += 1
@@ -2419,32 +2557,33 @@ class Terminal(tk.Text):
             elif ch == "\t":
                 if self._alt_mode:
                     ln = int(self.index("insert").split(".")[0])
-                    col = int(self.index("insert").split(".")[1])
+                    col = self._term_index_to_col(
+                        ln, int(self.index("insert").split(".")[1])
+                    )
                     target = self._term_next_tab(col)
                     self._grid_goto(ln, target)
                     i += 1
                     continue
-                col = int(self.index("insert").split(".")[1])
+                col = self._term_index_to_col(
+                    self._cur_line, int(self.index("insert").split(".")[1])
+                )
                 sp = self._term_next_tab(col) - col
                 if sp <= 0:
                     i += 1
                     continue
-                line_len = int(self.index(f"{self._cur_line}.end").split(".")[1])
-                if col > line_len:
-                    self.insert(f"{self._cur_line}.end", " " * (col - line_len))
-                    line_len = col
-                ovw = min(sp, line_len - col)
-                if ovw > 0:
-                    self.delete(
-                        f"{self._cur_line}.{col}", f"{self._cur_line}.{col + ovw}"
-                    )
+                _llw = self._term_col_width(self._cur_line)
+                if col > _llw:
+                    self.insert(f"{self._cur_line}.end", " " * (col - _llw))
+                _idx0 = self._term_col_to_index(self._cur_line, col)
+                _idx1 = self._term_col_to_index(self._cur_line, col + sp)
+                self.delete(f"{self._cur_line}.{_idx0}", f"{self._cur_line}.{_idx1}")
                 if self._sgr_tag_cache is None:
-                    self.insert(f"{self._cur_line}.{col}", " " * sp)
+                    self.insert(f"{self._cur_line}.{_idx0}", " " * sp)
                 else:
                     self.insert(
-                        f"{self._cur_line}.{col}", " " * sp, self._sgr_tag_cache
+                        f"{self._cur_line}.{_idx0}", " " * sp, self._sgr_tag_cache
                     )
-                self.mark_set("insert", f"{self._cur_line}.{col + sp}")
+                self.mark_set("insert", f"{self._cur_line}.{_idx0 + sp}")
                 i += 1
             elif ch >= " " and ch != "\x7f":
                 j = i
@@ -2459,32 +2598,31 @@ class Terminal(tk.Text):
                 i = j
                 if run:
                     self._last_char = run[-1]
-                col = int(self.index("insert").split(".")[1])
+                col = self._term_index_to_col(
+                    self._cur_line, int(self.index("insert").split(".")[1])
+                )
                 if not self._autowrap:
                     if col >= self._GRID_COLS:
                         col = self._GRID_COLS - 1
                     space = self._GRID_COLS - col
-                    if len(run) <= space:
-                        chunk = run
-                    else:
-                        chunk = run[: space - 1] + run[-1]
-                    line_len = int(self.index(f"{self._cur_line}.end").split(".")[1])
-                    if col > line_len:
-                        self.insert(f"{self._cur_line}.end", " " * (col - line_len))
-                        line_len = col
-                    ovw = min(len(chunk), line_len - col)
-                    if ovw > 0:
-                        self.delete(
-                            f"{self._cur_line}.{col}", f"{self._cur_line}.{col + ovw}"
-                        )
+                    chunk, _rest, _w = _term_split_run(run, space)
+                    if _rest:
+                        # Everything past the last column overwrites it.
+                        chunk = _term_split_run(run, max(0, space - 1))[0] + run[-1]
+                        _w = sum(_term_char_width(c) for c in chunk)
+                    _llw = self._term_col_width(self._cur_line)
+                    if col > _llw:
+                        self.insert(f"{self._cur_line}.end", " " * (col - _llw))
+                    _idx0 = self._term_col_to_index(self._cur_line, col)
+                    _idx1 = self._term_col_to_index(self._cur_line, col + _w)
+                    self.delete(f"{self._cur_line}.{_idx0}", f"{self._cur_line}.{_idx1}")
                     if self._sgr_tag_cache is None:
-                        self.insert(f"{self._cur_line}.{col}", chunk)
+                        self.insert(f"{self._cur_line}.{_idx0}", chunk)
                     else:
                         self.insert(
-                            f"{self._cur_line}.{col}", chunk, self._sgr_tag_cache
+                            f"{self._cur_line}.{_idx0}", chunk, self._sgr_tag_cache
                         )
-                    col += len(chunk)
-                    self.mark_set("insert", f"{self._cur_line}.{col}")
+                    self.mark_set("insert", f"{self._cur_line}.{_idx0 + len(chunk)}")
                     continue
                 while run:
                     wrapped = False
@@ -2504,22 +2642,18 @@ class Terminal(tk.Text):
                         col = 0
                         wrapped = True
                         space = self._GRID_COLS
-                    chunk = run[:space]
-                    run = run[space:]
-                    line_len = int(self.index(f"{self._cur_line}.end").split(".")[1])
-                    if col > line_len:
-                        self.insert(f"{self._cur_line}.end", " " * (col - line_len))
-                        line_len = col
-                    ovw = min(len(chunk), line_len - col)
-                    if ovw > 0:
-                        self.delete(
-                            f"{self._cur_line}.{col}", f"{self._cur_line}.{col + ovw}"
-                        )
+                    chunk, run, _w = _term_split_run(run, space)
+                    _llw = self._term_col_width(self._cur_line)
+                    if col > _llw:
+                        self.insert(f"{self._cur_line}.end", " " * (col - _llw))
+                    _idx0 = self._term_col_to_index(self._cur_line, col)
+                    _idx1 = self._term_col_to_index(self._cur_line, col + _w)
+                    self.delete(f"{self._cur_line}.{_idx0}", f"{self._cur_line}.{_idx1}")
                     if self._sgr_tag_cache is None:
-                        self.insert(f"{self._cur_line}.{col}", chunk)
+                        self.insert(f"{self._cur_line}.{_idx0}", chunk)
                     else:
                         self.insert(
-                            f"{self._cur_line}.{col}", chunk, self._sgr_tag_cache
+                            f"{self._cur_line}.{_idx0}", chunk, self._sgr_tag_cache
                         )
                     if wrapped:
                         self.tag_add(
@@ -2527,8 +2661,8 @@ class Terminal(tk.Text):
                             f"{self._cur_line - 1}.end",
                             f"{self._cur_line}.0",
                         )
-                    col += len(chunk)
-                    self.mark_set("insert", f"{self._cur_line}.{col}")
+                    col += _w
+                    self.mark_set("insert", f"{self._cur_line}.{_idx0 + len(chunk)}")
             else:
                 i += 1
         self._term_materialize_screen()
@@ -2844,7 +2978,8 @@ class Terminal(tk.Text):
         top = self.index("@0,0").split(".")[0]
         row = int(line) - int(top) + 1
         row = max(1, min(row, max(1, self._GRID_ROWS)))
-        colnum = max(1, min(int(col) + 1, max(1, self._GRID_COLS)))
+        true_col = self._term_index_to_col(line, int(col))
+        colnum = max(1, min(true_col + 1, max(1, self._GRID_COLS)))
         return colnum, row
 
     def _term_mouse_mods(self, event):
@@ -2859,6 +2994,23 @@ class Terminal(tk.Text):
             mods |= 16
         return mods
 
+    def _term_mouse_bypass_shift(self, pattern, event):
+        """If event's only role for Shift is bypassing mouse reporting
+        (self._mouse_mode is on and Shift is held), redirect it as the
+        same event pattern with Shift stripped, so tkinter's own (and
+        our) normal mouse handling for that button runs exactly as it
+        would with mouse reporting off, instead of whatever Shift
+        normally does for it. Returns whether it was redirected (the
+        caller should then return "break" to swallow the original)."""
+        if not (self._mouse_mode and (event.state & 0x1)):
+            return False
+        self._mouse_bypass = True
+        try:
+            self.event_generate(pattern, x=event.x, y=event.y)
+        finally:
+            self._mouse_bypass = False
+        return True
+
     def _term_send_mouse(self, button, event, release=False, drag=False):
         """Report a mouse event to the subprocess if mouse reporting is
         enabled (self._mouse_mode) and Shift isn't held (which reserves
@@ -2867,6 +3019,8 @@ class Terminal(tk.Text):
         X10 mouse-report encoding depending on what the subprocess
         requested."""
         if not self.running:
+            return False
+        if self._mouse_bypass:
             return False
         if not self._mouse_mode:
             return False
@@ -2915,10 +3069,14 @@ class Terminal(tk.Text):
         self.focus_set()
         if self._term_send_mouse(0, event):
             return "break"
+        if self._term_mouse_bypass_shift("<Button-1>", event):
+            return "break"
 
     def _term_button1_release(self, event):
         self.focus_set()
         if self._term_send_mouse(0, event, release=True):
+            return "break"
+        if self._term_mouse_bypass_shift("<ButtonRelease-1>", event):
             return "break"
         self._snap_caret(event)
 
@@ -2926,10 +3084,14 @@ class Terminal(tk.Text):
         self.focus_set()
         if self._term_send_mouse(0, event, drag=True):
             return "break"
+        if self._term_mouse_bypass_shift("<B1-Motion>", event):
+            return "break"
 
     def _term_button2_press(self, event):
         self.focus_set()
         if self._term_send_mouse(1, event):
+            return "break"
+        if self._term_mouse_bypass_shift("<Button-2>", event):
             return "break"
         return self._paste_clipboard(event)
 
@@ -2937,26 +3099,36 @@ class Terminal(tk.Text):
         self.focus_set()
         if self._term_send_mouse(1, event, drag=True):
             return "break"
+        if self._term_mouse_bypass_shift("<B2-Motion>", event):
+            return "break"
 
     def _term_button2_release(self, event):
         self.focus_set()
         if self._term_send_mouse(1, event, release=True):
+            return "break"
+        if self._term_mouse_bypass_shift("<ButtonRelease-2>", event):
             return "break"
 
     def _term_button3_press(self, event):
         self.focus_set()
         if self._term_send_mouse(2, event):
             return "break"
+        if self._term_mouse_bypass_shift("<Button-3>", event):
+            return "break"
 
     def _term_button3_release(self, event):
         self.focus_set()
         if self._term_send_mouse(2, event, release=True):
+            return "break"
+        if self._term_mouse_bypass_shift("<ButtonRelease-3>", event):
             return "break"
         return self._popup(event)
 
     def _term_button3_motion(self, event):
         self.focus_set()
         if self._term_send_mouse(2, event, drag=True):
+            return "break"
+        if self._term_mouse_bypass_shift("<B3-Motion>", event):
             return "break"
 
     def _term_motion(self, event):
