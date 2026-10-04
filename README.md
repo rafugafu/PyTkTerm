@@ -25,6 +25,7 @@ This is a full, real, standalone terminal emulator inside a tkinter `Text` widge
 ## Public Methods  
 - `setcursortype(to = 'block')`: sets the cursor shape to `'block'`, `'underline'`, or `'bar'`.  
 - `restart()`: terminates the running child process, clears the screen, and starts a new one with the same `command`.  
+- `_write(data)`: sends raw bytes to the child process's stdin through the pty (decoded to text first on Windows).  
 ## Events  
 - `<<TerminalProcessEnded>>`: fired once when the child process exits.  
 - `<<TerminalStopped>>`: fired once the widget has fully torn down the process and its resources (skipped when restarting via `restart()`).  
