@@ -837,6 +837,19 @@ class Terminal(tk.Text):
         else:
             if self._cur_line - self.screen_top + 1 > rows:
                 self.screen_top = self._cur_line - rows + 1
+            if cols < self._GRID_COLS:
+                # The live screen is still a fixed-width grid even on
+                # the primary screen; only truncate rows actually on
+                # it now, leaving already-scrolled-off scrollback at
+                # whatever width it was written with.
+                _last = self._term_last_real_line()
+                for ln in range(
+                    self.screen_top, min(self.screen_top + rows - 1, _last) + 1
+                ):
+                    if self._term_col_width(ln) > cols:
+                        self.delete(
+                            f"{ln}.{self._term_col_to_index(ln, cols)}", f"{ln}.end"
+                        )
         if cols > self._GRID_COLS:
             # Newly exposed columns get the default tab stop every 8
             # columns; without them a tab past the old width jumps to the
