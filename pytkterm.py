@@ -213,6 +213,15 @@ def _term_char_width(ch):
     return 1
 
 
+def _term_tcl_len(s):
+    """The number of Tk Text index positions s occupies: Tk's Text
+    widget represents a character outside the Basic Multilingual
+    Plane (most emoji, among others) as a surrogate pair internally,
+    so it takes two index positions, not the one Python's len() (and
+    a plain for-loop) would count."""
+    return sum(2 if ord(c) > 0xFFFF else 1 for c in s)
+
+
 def _term_split_run(run, space):
     """Split off the longest prefix of run that fits within `space`
     terminal columns (counting character widths via
@@ -1410,16 +1419,21 @@ class Terminal(tk.Text):
         or wide character already in it doesn't throw off later
         column-based addressing (CUP, erase, insert/delete character,
         ...). If col falls past row's current content, returns its
-        current length, same as addressing straight off the end."""
+        current length, same as addressing straight off the end.
+        Counted in Tk's own index units, not Python string length: a
+        character outside the Basic Multilingual Plane (most emoji)
+        takes two of Tk's index positions, not one."""
         if col <= 0:
             return 0
         text = self.get(f"{row}.0", f"{row}.end")
         c = 0
-        for i, ch in enumerate(text):
+        idx = 0
+        for ch in text:
             if c >= col:
-                return i
+                return idx
             c += _term_char_width(ch)
-        return len(text)
+            idx += _term_tcl_len(ch)
+        return idx
 
     def _term_index_to_col(self, row, index):
         """The terminal column that buffer character offset index on
@@ -1477,7 +1491,7 @@ class Terminal(tk.Text):
             _eidx = self._term_col_to_index(row, gcol + _chunk_w)
             self.delete(f"{row}.{_gidx}", f"{row}.{_eidx}")
             self._term_insert(f"{row}.{_gidx}", chunk)
-            self.mark_set("insert", f"{row}.{_gidx + len(chunk)}")
+            self.mark_set("insert", f"{row}.{_gidx + _term_tcl_len(chunk)}")
 
     def _term_last_real_line(self):
         """The line number of the last line currently in the buffer."""
@@ -2635,7 +2649,9 @@ class Terminal(tk.Text):
                         self.insert(
                             f"{self._cur_line}.{_idx0}", chunk, self._sgr_tag_cache
                         )
-                    self.mark_set("insert", f"{self._cur_line}.{_idx0 + len(chunk)}")
+                    self.mark_set(
+                        "insert", f"{self._cur_line}.{_idx0 + _term_tcl_len(chunk)}"
+                    )
                     continue
                 while run:
                     wrapped = False
@@ -2675,7 +2691,9 @@ class Terminal(tk.Text):
                             f"{self._cur_line}.0",
                         )
                     col += _w
-                    self.mark_set("insert", f"{self._cur_line}.{_idx0 + len(chunk)}")
+                    self.mark_set(
+                        "insert", f"{self._cur_line}.{_idx0 + _term_tcl_len(chunk)}"
+                    )
             else:
                 i += 1
         self._term_materialize_screen()
