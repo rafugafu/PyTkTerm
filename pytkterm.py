@@ -1,3 +1,5 @@
+#!/usr/bin/python3.13
+
 """A VT100/xterm terminal emulator built on a tk Text widget:
 runs a real subprocess over a PTY (see _term_start_process()),
 parses its output as a stream of ANSI/VT escape sequences (see
@@ -6,8 +8,6 @@ character grid, cursor, and colors/styles into the Text widget's
 content and tags. Input events (_key()/_meta_key()/mouse handlers)
 are translated back into the escape sequences/bytes the subprocess
 expects."""
-
-#!/usr/bin/python3.13
 
 import os
 import platform
