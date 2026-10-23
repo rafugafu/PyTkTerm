@@ -164,7 +164,7 @@ def test_sgr_is_highlight_tracks_reverse_video_and_backgrounds(params, expected)
 
 @pytest.mark.parametrize(
     ("text", "length"),
-    [("", 0), ("abc", 3), ("é日", 2), ("\U0001F600", 2), ("a\U0001F600b", 4)],
+    [("", 0), ("abc", 3), ("é日", 2), ("\U0001f600", 2), ("a\U0001f600b", 4)],
 )
 def test_tcl_length_counts_characters_outside_the_basic_plane_twice(text, length):
     assert _term_tcl_len(text) == length

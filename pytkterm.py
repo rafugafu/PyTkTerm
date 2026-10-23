@@ -877,7 +877,9 @@ class Terminal(tk.Text):
             for ln in range(1, min(actual_rows, rows) + 1):
                 width = self._term_col_width(ln)
                 if width > cols:
-                    self.delete(f"{ln}.{self._term_col_to_index(ln, cols)}", f"{ln}.end")
+                    self.delete(
+                        f"{ln}.{self._term_col_to_index(ln, cols)}", f"{ln}.end"
+                    )
                 elif width < cols:
                     self.insert(f"{ln}.end", " " * (cols - width))
             if rows > actual_rows:
@@ -1575,9 +1577,7 @@ class Terminal(tk.Text):
         """
         while run:
             row = int(self.index("insert").split(".")[0])
-            gcol = self._term_index_to_col(
-                row, int(self.index("insert").split(".")[1])
-            )
+            gcol = self._term_index_to_col(row, int(self.index("insert").split(".")[1]))
             if gcol >= self._GRID_COLS:
                 if not self._autowrap:
                     gcol = self._GRID_COLS - 1
@@ -1599,9 +1599,7 @@ class Terminal(tk.Text):
                 chunk, _w = _term_overwrite_chunk(run, space)
                 run = ""
             else:
-                chunk, run, _w = _term_split_run(
-                    run, space, space >= self._GRID_COLS
-                )
+                chunk, run, _w = _term_split_run(run, space, space >= self._GRID_COLS)
                 if not chunk:
                     # A wide character that doesn't fit leaves the last
                     # column blank and wraps.
@@ -2067,7 +2065,9 @@ class Terminal(tk.Text):
                                     self.mark_set("insert", _ins)
                         elif cmd in ("H", "f"):
                             row_ = p[0] if p[0] else 1
-                            col_ = min(p[1] if len(p) > 1 and p[1] else 1, self._GRID_COLS)
+                            col_ = min(
+                                p[1] if len(p) > 1 and p[1] else 1, self._GRID_COLS
+                            )
                             if self._alt_mode:
                                 self._grid_goto(self._origin_row(row_), col_ - 1)
                             else:
@@ -2079,22 +2079,30 @@ class Terminal(tk.Text):
                         elif cmd == "A":
                             mv = p[0] or 1
                             if self._alt_mode:
-                                self._grid_goto(self._term_move_row(int(ln), -mv), int(col))
+                                self._grid_goto(
+                                    self._term_move_row(int(ln), -mv), int(col)
+                                )
                             else:
                                 self._cur_line = (
                                     self.screen_top
-                                    + self._term_move_row(int(ln) - self.screen_top + 1, -mv)
+                                    + self._term_move_row(
+                                        int(ln) - self.screen_top + 1, -mv
+                                    )
                                     - 1
                                 )
                                 self._term_goto(self._cur_line, int(col))
                         elif cmd == "B":
                             mv = p[0] or 1
                             if self._alt_mode:
-                                self._grid_goto(self._term_move_row(int(ln), mv), int(col))
+                                self._grid_goto(
+                                    self._term_move_row(int(ln), mv), int(col)
+                                )
                             else:
                                 self._cur_line = (
                                     self.screen_top
-                                    + self._term_move_row(int(ln) - self.screen_top + 1, mv)
+                                    + self._term_move_row(
+                                        int(ln) - self.screen_top + 1, mv
+                                    )
                                     - 1
                                 )
                                 self._vt_sync()
@@ -2116,7 +2124,9 @@ class Terminal(tk.Text):
                             else:
                                 self._cur_line = (
                                     self.screen_top
-                                    + self._term_move_row(int(ln) - self.screen_top + 1, mv)
+                                    + self._term_move_row(
+                                        int(ln) - self.screen_top + 1, mv
+                                    )
                                     - 1
                                 )
                                 self._vt_sync()
@@ -2128,7 +2138,9 @@ class Terminal(tk.Text):
                             else:
                                 self._cur_line = (
                                     self.screen_top
-                                    + self._term_move_row(int(ln) - self.screen_top + 1, -mv)
+                                    + self._term_move_row(
+                                        int(ln) - self.screen_top + 1, -mv
+                                    )
                                     - 1
                                 )
                                 self.mark_set("insert", f"{self._cur_line}.0")
@@ -2184,7 +2196,10 @@ class Terminal(tk.Text):
                                 self._term_goto(self._cur_line, int(col))
                         elif cmd == "P":
                             mv = p[0] or 1
-                            self.delete("insert", f"{ln}.{self._term_col_to_index(ln, col + mv)}")
+                            self.delete(
+                                "insert",
+                                f"{ln}.{self._term_col_to_index(ln, col + mv)}",
+                            )
                             if self._alt_mode:
                                 # Rows on the alt screen are always exactly
                                 # _GRID_COLS columns wide, so blank cells
@@ -2778,7 +2793,9 @@ class Terminal(tk.Text):
                     self._term_split_wide(self._cur_line, col + _w)
                     _idx0 = self._term_col_to_index(self._cur_line, col)
                     _idx1 = self._term_col_to_index(self._cur_line, col + _w)
-                    self.delete(f"{self._cur_line}.{_idx0}", f"{self._cur_line}.{_idx1}")
+                    self.delete(
+                        f"{self._cur_line}.{_idx0}", f"{self._cur_line}.{_idx1}"
+                    )
                     if self._sgr_tag_cache is None:
                         self.insert(f"{self._cur_line}.{_idx0}", chunk)
                     else:
@@ -2821,7 +2838,9 @@ class Terminal(tk.Text):
                     self._term_split_wide(self._cur_line, col + _w)
                     _idx0 = self._term_col_to_index(self._cur_line, col)
                     _idx1 = self._term_col_to_index(self._cur_line, col + _w)
-                    self.delete(f"{self._cur_line}.{_idx0}", f"{self._cur_line}.{_idx1}")
+                    self.delete(
+                        f"{self._cur_line}.{_idx0}", f"{self._cur_line}.{_idx1}"
+                    )
                     if self._sgr_tag_cache is None:
                         self.insert(f"{self._cur_line}.{_idx0}", chunk)
                     else:

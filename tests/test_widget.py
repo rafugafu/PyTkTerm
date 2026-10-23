@@ -115,7 +115,9 @@ def posix_pty(monkeypatch):
     use_platform(monkeypatch, "Linux")
     monkeypatch.setitem(sys.modules, "pty", SimpleNamespace(openpty=fake_openpty))
     monkeypatch.setitem(
-        sys.modules, "fcntl", SimpleNamespace(ioctl=lambda *args: calls.ioctls.append(args))
+        sys.modules,
+        "fcntl",
+        SimpleNamespace(ioctl=lambda *args: calls.ioctls.append(args)),
     )
     monkeypatch.setitem(sys.modules, "termios", SimpleNamespace(TIOCSWINSZ=0x5414))
     monkeypatch.setitem(sys.modules, "select", SimpleNamespace(select=next_select))
@@ -305,7 +307,9 @@ def test_font_variants_are_cached_and_styled(term):
 def test_character_size_is_measured_once(term):
     width, height = term.charwidth, term.charheight
 
-    term._term_font = SimpleNamespace(measure=lambda text: 999, metrics=lambda name: 999)
+    term._term_font = SimpleNamespace(
+        measure=lambda text: 999, metrics=lambda name: 999
+    )
     term._term_measure_char_size()
 
     assert (term.charwidth, term.charheight) == (width, height)
@@ -388,7 +392,10 @@ def test_custom_cursor_color_is_used(tk_root, term):
     [
         lambda t: t._process("\x1b[?25l"),
         lambda t: setattr(t, "_cursor_has_focus", False),
-        lambda t: (setattr(t, "_cursor_blink_enabled", True), setattr(t, "_cursor_blink_visible", False)),
+        lambda t: (
+            setattr(t, "_cursor_blink_enabled", True),
+            setattr(t, "_cursor_blink_visible", False),
+        ),
     ],
     ids=["dectcem-hidden", "no-focus", "blinked-off"],
 )
@@ -649,7 +656,9 @@ def test_nocolor_terminal_still_advertises_the_color_support_it_inherited(
         shutdown(terminal)
 
 
-def test_start_sizes_the_grid_and_resets_scrolling_and_tabs(posix_pty, monkeypatch, term):
+def test_start_sizes_the_grid_and_resets_scrolling_and_tabs(
+    posix_pty, monkeypatch, term
+):
     without_reader(monkeypatch)
     term._scroll_top, term._scroll_bot = 2, 3
     term._tab_stops = set()
@@ -666,11 +675,14 @@ def test_start_begins_polling_for_output(posix_pty, monkeypatch, term):
 
     term._term_start_process()
 
-    assert any(
-        pytkterm.tk.Misc.after_info(term, aid)[1] == "timer"
-        for aid in term._pending_after_ids
-        if aid.startswith("after#")
-    ) or term._pending_after_ids
+    assert (
+        any(
+            pytkterm.tk.Misc.after_info(term, aid)[1] == "timer"
+            for aid in term._pending_after_ids
+            if aid.startswith("after#")
+        )
+        or term._pending_after_ids
+    )
 
 
 def test_windows_start_spawns_powershell_by_default(windows_pty, monkeypatch, term):
@@ -730,7 +742,9 @@ def test_posix_reader_decodes_output_and_signals_the_end(posix_pty, term):
     assert items == ["héllo", None]
 
 
-def test_posix_reader_reassembles_multibyte_characters_split_across_reads(posix_pty, term):
+def test_posix_reader_reassembles_multibyte_characters_split_across_reads(
+    posix_pty, term
+):
     ready = ([posix_pty.master], [], [])
 
     def second_half_arrives():
@@ -1318,7 +1332,9 @@ def press(terminal, keysym, char="", state=0, keysym_num=None):
         ("Escape", "\x1b", 0, b"\x1b"),
     ],
 )
-def test_keys_are_translated_to_what_a_terminal_sends(term, keysym, char, state, expected):
+def test_keys_are_translated_to_what_a_terminal_sends(
+    term, keysym, char, state, expected
+):
     assert press(term, keysym, char, state) == expected
 
 
@@ -1710,7 +1726,9 @@ def test_shift_click_bypasses_mouse_reporting(monkeypatch, mouse_term):
     mouse_term._process("\x1b[?1000h\x1b[?1006h")
     redirected = []
     monkeypatch.setattr(
-        mouse_term, "event_generate", lambda pattern, **kwargs: redirected.append((pattern, kwargs))
+        mouse_term,
+        "event_generate",
+        lambda pattern, **kwargs: redirected.append((pattern, kwargs)),
     )
 
     result = mouse_term._term_button1_press(cell_event(mouse_term, 1, 1, state=SHIFT))
@@ -2040,7 +2058,9 @@ def test_real_shell_resize_reaches_the_program(tk_root):
 
 @pytest.mark.skipif(os.name != "posix", reason="needs a POSIX PTY")
 def test_real_shell_colors_end_up_in_tags(tk_root):
-    terminal = real_terminal(tk_root, ["sh", "-c", "printf '\\033[31mred\\033[0m ok\\n'"])
+    terminal = real_terminal(
+        tk_root, ["sh", "-c", "printf '\\033[31mred\\033[0m ok\\n'"]
+    )
     try:
         assert wait_for(tk_root, lambda: "red ok" in "".join(screen(terminal)))
         assert style_at(terminal, 0, 0)["foreground"] == "#cd0000"

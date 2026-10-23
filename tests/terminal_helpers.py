@@ -17,7 +17,9 @@ def make_terminal(root, cols=20, rows=5, **kwargs):
     terminal = Terminal(root, **kwargs)
     terminal._term_started = True
     terminal._term_measure_char_size()
-    chrome = int(terminal.cget("borderwidth")) + int(terminal.cget("highlightthickness"))
+    chrome = int(terminal.cget("borderwidth")) + int(
+        terminal.cget("highlightthickness")
+    )
     pad_x = 2 * (chrome + int(terminal.cget("padx")))
     pad_y = 2 * (chrome + int(terminal.cget("pady")))
     terminal.place(

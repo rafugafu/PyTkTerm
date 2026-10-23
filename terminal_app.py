@@ -20,6 +20,7 @@ TERMINAL_TAB_CLOSE_COLOR = "#808080"
 TERMINAL_TAB_CLOSE_HOVER_COLOR = "#ff5555"
 TERMINAL_TAB_CLOSE_IMAGE_SIZE = 9
 
+
 def make_terminal_tab_close_image(master, color):
     # draw a two pixel wide X so no image files are needed
     size = TERMINAL_TAB_CLOSE_IMAGE_SIZE
@@ -29,6 +30,7 @@ def make_terminal_tab_close_image(master, color):
             image.put(color, to=(x, i))
             image.put(color, to=(size - 1 - x, i))
     return image
+
 
 class TerminalNotebookTab(tk.Frame):
     def __init__(self, notebook, content, title):
@@ -86,6 +88,7 @@ class TerminalNotebookTab(tk.Frame):
 
     def on_button_leave(self, event):
         self.button.configure(image=self.notebook.close_image)
+
 
 class TerminalNotebook(tk.Frame):
     def __init__(self, master):
@@ -163,6 +166,7 @@ class TerminalNotebook(tk.Frame):
 
         self.event_generate("<<NotebookTabClosed>>")
 
+
 # setup window
 root = tk.Tk()
 root.title("Terminal")
@@ -175,30 +179,28 @@ root.title("Terminal")
 tabs = TerminalNotebook(root)
 tabs.pack(fill="both", expand=True)
 
+
 # close window when the last tab is closed
 def close_window_if_no_tabs(*args):
     if not tabs.tabs():
         root.destroy()
 
+
 tabs.bind("<<NotebookTabClosed>>", close_window_if_no_tabs)
+
 
 # open new terminal function
 def newterm(*args, **kwargs):
 
     # make and setup terminal widget
     tw = Terminal(tabs, *args, **kwargs)
-    tw.bind("<Control-t>",
-            lambda _: newterm(
-            bg="black",
-            fg="white",
-            bd=0
-            )
-    )
+    tw.bind("<Control-t>", lambda _: newterm(bg="black", fg="white", bd=0))
     tabs.add(tw, text="Terminal")
     tw.focus_set()
 
     # bind process end to close tab
     tw.bind("<<TerminalStopped>>", lambda _, tw=tw: tw.destroy())
+
 
 # if args are given and valid, set command for first terminal to args. otherwise, set default command (/bin/bash on linux and powershell.exe on windows)
 args = sys.argv[1:]
@@ -208,12 +210,7 @@ else:
     command = None
 
 # make first terminal
-newterm(
-    command=command,
-    bg="black",
-    fg="white",
-    bd=0
-)
+newterm(command=command, bg="black", fg="white", bd=0)
 
 # mainloop
 root.mainloop()

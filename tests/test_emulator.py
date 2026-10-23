@@ -161,9 +161,9 @@ def test_combining_marks_add_no_column(both):
 
 
 def test_characters_outside_the_basic_plane_count_as_wide(both):
-    both._process("a\U0001F600b")
+    both._process("a\U0001f600b")
 
-    assert screen(both)[0] == "a\U0001F600b"
+    assert screen(both)[0] == "a\U0001f600b"
     assert cursor(both) == (0, 4)
 
     both._process("\x1b[1;4H")
