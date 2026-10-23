@@ -7,7 +7,8 @@ _process(), the emulator's core), and reflects the resulting
 character grid, cursor, and colors/styles into the Text widget's
 content and tags. Input events (_key()/_meta_key()/mouse handlers)
 are translated back into the escape sequences/bytes the subprocess
-expects."""
+expects.
+"""
 
 import os
 import platform
@@ -36,7 +37,8 @@ _PTY_MAX_PENDING_ESC = 600000  # safety cap on a stalled/malformed escape sequen
 def _sgr_is_highlight(params):
     """Whether an SGR (color/style) escape's params turn a "reverse
     video"-like highlighted appearance on, off, or leave it unchanged
-    (None). Currently unused elsewhere in this file."""
+    (None). Currently unused elsewhere in this file.
+    """
     result = None
     idx = 0
     while idx < len(params):
@@ -85,7 +87,8 @@ _TERM_ANSI_CUBE_LEVELS = (0, 95, 135, 175, 215, 255)
 def _ansi_256_hex(n):
     """Convert an ANSI 256-color palette index n to a '#rrggbb' hex
     string (the first 16 are the named ANSI colors, the next 216 form a
-    6x6x6 color cube, and the last 24 are a grayscale ramp)."""
+    6x6x6 color cube, and the last 24 are a grayscale ramp).
+    """
     if n < 16:
         return _TERM_ANSI_16_HEX[n]
     if n < 232:
@@ -97,7 +100,8 @@ def _ansi_256_hex(n):
 
 def _sgr_new_state():
     """A fresh SGR (text style/color) state dict, as tracked per
-    Terminal instance in self._sgr_state and mutated by _sgr_apply()."""
+    Terminal instance in self._sgr_state and mutated by _sgr_apply().
+    """
     return {
         "fg": None,
         "bg": None,
@@ -115,7 +119,8 @@ def _sgr_apply(state, params):
     """Apply one SGR ('\\x1b[...m') escape's params to state in place
     (state as returned by _sgr_new_state()), handling the standard
     16/8-bright colors, 256-color and truecolor (38/48;5/2;...) forms,
-    and the usual bold/italic/underline/etc attribute toggles."""
+    and the usual bold/italic/underline/etc attribute toggles.
+    """
     if not params:
         params = [0]
     i = 0
@@ -192,7 +197,8 @@ def _sgr_apply(state, params):
 
 def _sgr_colour_hex(c):
     """Convert an SGR color value (an ANSI palette index, or an (r, g,
-    b) truecolor tuple) to a '#rrggbb' hex string."""
+    b) truecolor tuple) to a '#rrggbb' hex string.
+    """
     if c is None:
         return None
     if isinstance(c, tuple):
@@ -205,7 +211,8 @@ def _term_char_width(ch):
     (rendered stacked onto the previous cell, not given one of its
     own), 2 for an East Asian wide/fullwidth character, 1 otherwise.
     Needed because the Text widget indexes by raw character, which
-    only matches terminal columns when every character is width 1."""
+    only matches terminal columns when every character is width 1.
+    """
     if unicodedata.category(ch) in ("Mn", "Me", "Cf"):
         return 0
     if unicodedata.east_asian_width(ch) in ("W", "F"):
@@ -218,24 +225,27 @@ def _term_tcl_len(s):
     widget represents a character outside the Basic Multilingual
     Plane (most emoji, among others) as a surrogate pair internally,
     so it takes two index positions, not the one Python's len() (and
-    a plain for-loop) would count."""
+    a plain for-loop) would count.
+    """
     return sum(2 if ord(c) > 0xFFFF else 1 for c in s)
 
 
-def _term_split_run(run, space):
+def _term_split_run(run, space, force=True):
     """Split off the longest prefix of run that fits within `space`
     terminal columns (counting character widths via
     _term_char_width()), returning (prefix, rest, prefix's width).
-    Always consumes at least one character when run isn't empty, even
-    if that character (e.g. a wide one) doesn't actually fit, so a
-    caller looping on the remainder can't stall."""
+    A first character that doesn't fit (a wide one with a single
+    column left) is consumed anyway when force is set, so a caller
+    looping on the remainder can't stall; a caller that handles it
+    itself passes force=False and gets it back in rest.
+    """
     width = 0
     i = 0
     n = len(run)
     while i < n:
         w = _term_char_width(run[i])
         if width + w > space:
-            if i == 0:
+            if i == 0 and force:
                 i = 1
                 width = w
             break
@@ -244,9 +254,29 @@ def _term_split_run(run, space):
     return run[:i], run[i:], width
 
 
+def _term_overwrite_chunk(run, space):
+    """What a write of run leaves on a row with `space` columns left
+    when autowrap is off: whatever fits, then the final character
+    overwriting the last column (a wide final character can't fit in
+    one column, so it becomes a blank). Returns (chunk, width).
+    """
+    chunk, rest, width = _term_split_run(run, space, False)
+    if rest:
+        last = run[-1]
+        if _term_char_width(last) == 2:
+            last = " "
+        chunk = _term_split_run(run, max(0, space - 1), False)[0] + last
+        width = sum(_term_char_width(c) for c in chunk)
+        if width < space:
+            chunk += " " * (space - width)
+            width = space
+    return chunk, width
+
+
 def _term_sgr_resolve(state, default_fg, default_bg):
     """Resolve an SGR state to the actual (fg, bg) hex colors to draw
-    with, applying bold-brightens-color, reverse video, and conceal."""
+    with, applying bold-brightens-color, reverse video, and conceal.
+    """
     fg = default_fg if state["fg"] is None else _sgr_colour_hex(state["fg"])
     bg = default_bg if state["bg"] is None else _sgr_colour_hex(state["bg"])
     if state["bold"] and isinstance(state["fg"], int) and state["fg"] < 8:
@@ -317,7 +347,8 @@ class Terminal(tk.Text):
         highlighting draws over it instead). font: the font family name
         (a string) and fontsize: its size (a number), always used
         explicitly for the text, the bold/italic variants and the
-        cell size."""
+        cell size.
+        """
         kwargs["font"] = (font, fontsize)
         kwargs.setdefault("wrap", "none")
         super().__init__(master, *args, **kwargs)
@@ -468,14 +499,16 @@ class Terminal(tk.Text):
 
     def setcursortype(self, to="block"):
         """Set the cursor shape ('block', 'bar', or 'underline'), as
-        requested by a DECSCUSR escape sequence."""
+        requested by a DECSCUSR escape sequence.
+        """
         self._cursor_shape = to
         self._cursor_schedule_redraw()
 
     def _cursor_set_color(self, color, custom=True):
         """Set the cursor's color; custom=False marks it as the
         terminal's default color rather than one set by an OSC 12
-        escape (ignored in nocolor mode)."""
+        escape (ignored in nocolor mode).
+        """
         if custom and self.nocolor:
             return
         self._cursor_color = color
@@ -494,7 +527,8 @@ class Terminal(tk.Text):
 
     def _cursor_reset_blink_phase(self):
         """Restart the blink cycle with the cursor visible (called on
-        any cursor move/input)."""
+        any cursor move/input).
+        """
         self._cursor_blink_visible = True
         if self._cursor_blink_after_id is not None:
             self.after_cancel(self._cursor_blink_after_id)
@@ -514,7 +548,8 @@ class Terminal(tk.Text):
 
     def _cursor_schedule_redraw(self):
         """Coalesce cursor-affecting changes into a single redraw, run
-        once idle."""
+        once idle.
+        """
         if self._cursor_redraw_pending:
             return
         self._cursor_redraw_pending = True
@@ -526,7 +561,8 @@ class Terminal(tk.Text):
 
     def _cursor_char_colors(self):
         """The fg/bg colors of the character currently under the
-        cursor, from its own SGR highlight tag if it has one."""
+        cursor, from its own SGR highlight tag if it has one.
+        """
         fg = self._term_default_fg
         bg = self._term_default_bg
         try:
@@ -545,7 +581,8 @@ class Terminal(tk.Text):
 
     def _cursor_redraw(self):
         """Reposition/redraw (or hide) the cursor widget to match its
-        current grid position, shape, color, and visibility."""
+        current grid position, shape, color, and visibility.
+        """
         if not self.winfo_exists():
             return
         if (
@@ -597,14 +634,16 @@ class Terminal(tk.Text):
     def _resolve_insert(self, idx):
         """Substitute the "insert" keyword in a tkinter index with this
         terminal's own cursor position (self._cur_line/self._cx),
-        since the real "insert" mark isn't used to track it."""
+        since the real "insert" mark isn't used to track it.
+        """
         if isinstance(idx, str) and "insert" in idx:
             return idx.replace("insert", f"{self._cur_line}.{self._cx}")
         return idx
 
     def mark_set(self, mark, *args, **kwargs):
         """Moving the "insert" mark instead moves this terminal's own
-        cursor position; every other mark behaves normally."""
+        cursor position; every other mark behaves normally.
+        """
         if mark != "insert":
             return super().mark_set(mark, *args, **kwargs)
         _idx = super().index(self._resolve_insert(args[0]))
@@ -668,7 +707,8 @@ class Terminal(tk.Text):
 
     def _term_compute_size(self):
         """Resize the Text widget's width/height (in characters) to fit
-        its current pixel size, and return the resulting (cols, rows)."""
+        its current pixel size, and return the resulting (cols, rows).
+        """
         self.update()
         charw, charh = self.charwidth, self.charheight
         _chrome = int(self.cget("borderwidth")) + int(self.cget("highlightthickness"))
@@ -682,7 +722,8 @@ class Terminal(tk.Text):
     def _term_on_map(self, event):
         """First time this terminal is actually shown, start its
         subprocess (sizing needs real widget dimensions, unavailable
-        before then); on a later re-map, just resize/redraw."""
+        before then); on a later re-map, just resize/redraw.
+        """
         if self._term_started:
             self._term_apply_resize()
         else:
@@ -693,7 +734,8 @@ class Terminal(tk.Text):
 
     def _term_refresh_default_colors(self):
         """Re-read the terminal's default fg/bg from the current ttk
-        style (after a theme change, or before starting the process)."""
+        style (after a theme change, or before starting the process).
+        """
         self._term_default_bg = self.cget("background")
         self._term_default_fg = self.cget("foreground")
         self._default_fg_rgb = self.winfo_rgb(self._term_default_fg)
@@ -706,7 +748,8 @@ class Terminal(tk.Text):
 
     def _term_reset_tabs(self):
         """Reset tab stops to the default every-8-columns (HTS/TBC use
-        self._tab_stops directly to add/remove individual stops)."""
+        self._tab_stops directly to add/remove individual stops).
+        """
         self._tab_stops = set(range(8, self._GRID_COLS, 8))
 
     def _term_next_tab(self, col):
@@ -718,7 +761,8 @@ class Terminal(tk.Text):
 
     def _term_measure_char_size(self):
         """Measure one monospace character's pixel size (once), needed
-        to convert the widget's pixel size to a column/row grid size."""
+        to convert the widget's pixel size to a column/row grid size.
+        """
         if self.charwidth is not None:
             return
         self.charwidth = max(1, self._term_font.measure(" "))
@@ -727,7 +771,8 @@ class Terminal(tk.Text):
     def _term_start_process(self):
         """Size the grid, then spawn the subprocess attached to a PTY
         (Python's pty module on Linux, pywinpty elsewhere), sized to
-        match, and start the background thread that reads its output."""
+        match, and start the background thread that reads its output.
+        """
         self._term_measure_char_size()
         self._GRID_COLS, self._GRID_ROWS = self._term_compute_size()
         self._VT_ROWS = self._GRID_ROWS
@@ -791,7 +836,8 @@ class Terminal(tk.Text):
 
     def _term_on_configure(self, event):
         """Debounce <Configure> (widget resize) events so
-        _term_apply_resize() only runs once resizing has settled."""
+        _term_apply_resize() only runs once resizing has settled.
+        """
         size = (event.width, event.height)
         if size == self._last_term_size:
             return
@@ -802,7 +848,8 @@ class Terminal(tk.Text):
 
     def _term_apply_resize(self):
         """Apply a settled resize: recompute the grid size and, if it
-        actually changed, resize the grid and notify the subprocess."""
+        actually changed, resize the grid and notify the subprocess.
+        """
         self._resize_after_id = None
         if not self.winfo_exists():
             return
@@ -823,7 +870,8 @@ class Terminal(tk.Text):
         less) expects its exact grid to be preserved; in the primary
         screen, just let more/less of the scrollback show through by
         moving screen_top. Then tells the PTY and subprocess about the
-        new size (TIOCSWINSZ + SIGWINCH) on Linux."""
+        new size (TIOCSWINSZ + SIGWINCH) on Linux.
+        """
         if self._alt_mode:
             actual_rows = self._term_last_real_line()
             for ln in range(1, min(actual_rows, rows) + 1):
@@ -890,7 +938,8 @@ class Terminal(tk.Text):
     def _term_preexec(self):
         """subprocess.Popen preexec_fn (Linux): make the child its own
         session leader and give it the PTY as its controlling terminal,
-        so it (and anything it starts) sees a real terminal session."""
+        so it (and anything it starts) sees a real terminal session.
+        """
         import fcntl
         import termios
 
@@ -902,7 +951,8 @@ class Terminal(tk.Text):
         and put decoded chunks on q for _poll() to process on the GUI
         thread; puts a final None once the process/fd closes. gen
         guards against a stale thread (from a previous restart())
-        still running after a newer one has started."""
+        still running after a newer one has started.
+        """
         _dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
         while self._read_generation == gen:
             try:
@@ -937,7 +987,8 @@ class Terminal(tk.Text):
 
     def _emit_process_ended(self):
         """Mark the subprocess as no longer running and fire
-        <<TerminalProcessEnded>> once (idempotent)."""
+        <<TerminalProcessEnded>> once (idempotent).
+        """
         if not self.running:
             return
         self.running = False
@@ -950,7 +1001,8 @@ class Terminal(tk.Text):
         """Kill the subprocess and release its PTY; safe to call more
         than once. restarting suppresses the actions (like firing
         <<TerminalStopped>>, see below) that only make sense when the
-        buffer is actually closing for good."""
+        buffer is actually closing for good.
+        """
         if self._closed:
             return
         self._closed = True
@@ -997,7 +1049,8 @@ class Terminal(tk.Text):
     def restart(self):
         """Kill the current subprocess and start a fresh one with a
         blank screen, resetting all emulator state (cursor, tabs, SGR,
-        modes, alternate screen) back to defaults."""
+        modes, alternate screen) back to defaults.
+        """
         self._terminate_process(restarting=True)
         self.unbind("<Key>")
         self.bind("<Key>", self._key)
@@ -1041,7 +1094,8 @@ class Terminal(tk.Text):
     def _is_default_colour(self, colour, default_rgb):
         """Whether colour is unset or resolves to the same RGB as the
         terminal's default, so a redundant SGR/fill tag isn't created
-        for it."""
+        for it.
+        """
         return (
             colour is None
             or self.winfo_rgb(self._term_theme_color(colour)) == default_rgb
@@ -1050,7 +1104,8 @@ class Terminal(tk.Text):
     def _term_theme_color(self, colour):
         """The real color for colour, which is either a color or "@fg"/
         "@bg" standing for the terminal's current default fg/bg (that is
-        how SGR tags refer to theme colors, see _recompute_sgr_tag())."""
+        how SGR tags refer to theme colors, see _recompute_sgr_tag()).
+        """
         if colour == "@fg":
             return self._term_default_fg
         if colour == "@bg":
@@ -1059,7 +1114,8 @@ class Terminal(tk.Text):
 
     def _term_retheme_tags(self):
         """Reconfigure the SGR tags whose colors are the default fg/bg
-        (e.g. reverse video) after those changed with the theme."""
+        (e.g. reverse video) after those changed with the theme.
+        """
         for name, options in self._sgr_theme_tags.items():
             self.tag_configure(
                 name,
@@ -1070,7 +1126,8 @@ class Terminal(tk.Text):
         """The tag to fill erased/blank cells with, if the current SGR
         background isn't the default (e.g. after '\\x1b[42m' + erase,
         the erased cells should show green, not the terminal's default
-        background); None if no special fill is needed."""
+        background); None if no special fill is needed.
+        """
         if self.nocolor:
             return None
         fg, bg = _term_sgr_resolve(self._sgr_state, "@fg", "@bg")
@@ -1087,7 +1144,8 @@ class Terminal(tk.Text):
 
     def _start_blink(self):
         """Start the shared timer that toggles every SGR "blink" tag's
-        visibility, if not already running."""
+        visibility, if not already running.
+        """
         if self._blink_after_id is None:
             self._blink_after_id = self.after(500, self._blink_tick)
 
@@ -1095,7 +1153,8 @@ class Terminal(tk.Text):
         """Toggle every blinking tag's foreground color between its
         real color and the background (simulating blink text), pruning
         tags no longer used in the buffer; stops rescheduling itself
-        once nothing is blinking anymore."""
+        once nothing is blinking anymore.
+        """
         self._blink_after_id = None
         if self._closed:
             return
@@ -1129,7 +1188,8 @@ class Terminal(tk.Text):
     def _term_font_variant(self, bold=False, italic=False):
         """A font with this terminal's font family and size but bold
         and/or italic. Cached so the Font object stays alive
-        for as long as tags use it."""
+        for as long as tags use it.
+        """
         key = (bold, italic)
         if key not in self._sgr_fonts:
             self._sgr_fonts[key] = tkfont.Font(
@@ -1144,7 +1204,8 @@ class Terminal(tk.Text):
         """Resolve the current SGR state to a (cached, reused) tkinter
         tag name, creating that tag (colors, bold/italic font, underline,
         strike) the first time it's needed. self._sgr_tag_cache is None
-        when the state is plain/default, needing no tag at all."""
+        when the state is plain/default, needing no tag at all.
+        """
         fg, bg = _term_sgr_resolve(self._sgr_state, "@fg", "@bg")
         if (
             self._is_default_colour(fg, self._default_fg_rgb)
@@ -1218,7 +1279,8 @@ class Terminal(tk.Text):
 
     def _term_insert(self, index, ch):
         """Insert one character at index with the current SGR tag
-        (if any) applied."""
+        (if any) applied.
+        """
         if self._sgr_tag_cache is None:
             self.insert(index, ch)
         else:
@@ -1229,7 +1291,8 @@ class Terminal(tk.Text):
         filling revealed rows with blanks, without touching rows
         outside the region (implements DECSTBM scroll regions). Only
         the rows leaving and entering the region are deleted/inserted;
-        the rows that stay are left alone."""
+        the rows that stay are left alone.
+        """
         if up == 0:
             return
         n = bot - top + 1
@@ -1238,17 +1301,25 @@ class Terminal(tk.Text):
         if _k == n:
             self.delete(f"{top}.0", f"{bot}.end")
             self.insert(f"{top}.0", "\n".join([_blank] * n))
+            _first = top
         elif up > 0:
             self.delete(f"{top}.0", f"{top + _k}.0")
             self.insert(f"{bot - _k}.end", ("\n" + _blank) * _k)
+            _first = bot - _k + 1
         else:
             self.delete(f"{bot - _k}.end", f"{bot}.end")
             self.insert(f"{top}.0", (_blank + "\n") * _k)
+            _first = top
+        _fill = self._term_erase_fill_tag()
+        if _fill is not None:
+            for _r in range(_first, _first + _k):
+                self.tag_add(_fill, f"{_r}.0", f"{_r}.end")
 
     def _osc_colour_reply(self, which, colour):
         """Reply to an OSC color query (e.g. '\\x1b]10;?\\x1b\\\\' asking
         for the foreground color) with colour's RGB in the same OSC
-        reply format."""
+        reply format.
+        """
         r, g, b = self.winfo_rgb(colour)
         try:
             self._write(f"\x1b]{which};rgb:{r:04x}/{g:04x}/{b:04x}\x1b\\".encode())
@@ -1258,7 +1329,8 @@ class Terminal(tk.Text):
     def _osc_parse_colour(self, spec):
         """Parse an OSC color spec ('rgb:rr/gg/bb' or a named/#hex
         color tkinter understands) to a '#rrggbb' string, or None if
-        it isn't a color tkinter recognizes."""
+        it isn't a color tkinter recognizes.
+        """
         spec = spec.strip()
         if spec.startswith("rgb:"):
             parts = spec[4:].split("/")
@@ -1282,7 +1354,8 @@ class Terminal(tk.Text):
         body: OSC 52 sets the system clipboard (base64-encoded); OSC
         10/11 query the fg/bg color; OSC 12/112 get/reset the cursor
         color. Every other OSC code (e.g. window title) is silently
-        ignored, since this terminal has no window title to set."""
+        ignored, since this terminal has no window title to set.
+        """
         if body.startswith("52;"):
             parts = body.split(";", 2)
             if len(parts) == 3 and parts[2] not in ("", "?"):
@@ -1317,7 +1390,8 @@ class Terminal(tk.Text):
         """Switch to a blank alternate screen buffer (DECSET 1049 etc,
         used by full-screen apps like vim/less), saving the current
         primary-screen content/cursor/SGR to restore on
-        _leave_alt_screen()."""
+        _leave_alt_screen().
+        """
         if self._alt_saved is not None:
             return
         self._alt_saved = (
@@ -1367,7 +1441,8 @@ class Terminal(tk.Text):
 
     def _deccolm_clear(self):
         """Clear the screen and home the cursor, as DECSET 3 (switching
-        80/132-column mode) requires."""
+        80/132-column mode) requires.
+        """
         self._scroll_top = 1
         self._scroll_bot = self._GRID_ROWS
         if self._alt_mode:
@@ -1389,7 +1464,8 @@ class Terminal(tk.Text):
 
     def _origin_row(self, row):
         """Clamp a 1-based cursor-addressing row to the scroll region
-        if origin mode (DECOM) is set, otherwise to the whole grid."""
+        if origin mode (DECOM) is set, otherwise to the whole grid.
+        """
         if self._origin_mode:
             return min(
                 max(self._scroll_top, self._scroll_top + row - 1), self._scroll_bot
@@ -1398,7 +1474,8 @@ class Terminal(tk.Text):
 
     def _cursor_home(self):
         """Move the cursor to the top-left of the screen (or of the
-        scroll region, in origin mode)."""
+        scroll region, in origin mode).
+        """
         r = self._scroll_top if self._origin_mode else 1
         if self._alt_mode:
             self._grid_goto(r, 0)
@@ -1410,7 +1487,8 @@ class Terminal(tk.Text):
     def _term_col_width(self, row):
         """The total terminal-column width of row's current content
         (which can be less than its raw character count, since a
-        combining mark adds a character without adding a column)."""
+        combining mark adds a character without adding a column).
+        """
         return sum(_term_char_width(c) for c in self.get(f"{row}.0", f"{row}.end"))
 
     def _term_col_to_index(self, row, col):
@@ -1422,7 +1500,8 @@ class Terminal(tk.Text):
         current length, same as addressing straight off the end.
         Counted in Tk's own index units, not Python string length: a
         character outside the Basic Multilingual Plane (most emoji)
-        takes two of Tk's index positions, not one."""
+        takes two of Tk's index positions, not one.
+        """
         if col <= 0:
             return 0
         text = self.get(f"{row}.0", f"{row}.end")
@@ -1435,17 +1514,53 @@ class Terminal(tk.Text):
             idx += _term_tcl_len(ch)
         return idx
 
+    def _term_split_wide(self, row, col):
+        """Make terminal column col of row a character boundary: a wide
+        character straddling it is replaced by two blank cells, so
+        writing or erasing from col on neither swallows nor leaves
+        behind half of it.
+        """
+        idx = 0
+        c = 0
+        for ch in self.get(f"{row}.0", f"{row}.end"):
+            if c >= col:
+                return
+            w = _term_char_width(ch)
+            n = _term_tcl_len(ch)
+            if w == 2 and c + w > col:
+                self.delete(f"{row}.{idx}", f"{row}.{idx + n}")
+                self.insert(f"{row}.{idx}", "  ")
+                return
+            c += w
+            idx += n
+
+    def _term_move_row(self, row, delta):
+        """The screen row a vertical cursor movement of delta rows from
+        row ends on: going up it stops at the scroll region's top
+        margin from at or below it, going down at its bottom margin
+        from inside the region, otherwise at the screen's edges.
+        """
+        top = self._scroll_top if row >= self._scroll_top else 1
+        if self._scroll_top <= row <= self._scroll_bot:
+            bot = self._scroll_bot
+        else:
+            bot = self._GRID_ROWS
+        return min(max(row + delta, top), bot)
+
     def _term_index_to_col(self, row, index):
         """The terminal column that buffer character offset index on
-        row corresponds to (the inverse of _term_col_to_index())."""
+        row corresponds to (the inverse of _term_col_to_index()).
+        """
         return sum(_term_char_width(c) for c in self.get(f"{row}.0", f"{row}.{index}"))
 
     def _grid_goto(self, row, col):
         """Move the cursor to terminal column col of row row, clamped
         to the grid (alt screen coordinates), translating col to the
-        row's actual buffer offset (see _term_col_to_index())."""
+        row's actual buffer offset (see _term_col_to_index()).
+        """
         row = min(max(1, row), self._GRID_ROWS)
         col = min(max(0, col), self._GRID_COLS)
+        self._term_split_wide(row, col)
         self.mark_set("insert", f"{row}.{self._term_col_to_index(row, col)}")
 
     def _grid_put_run(self, run):
@@ -1456,7 +1571,8 @@ class Terminal(tk.Text):
         the last column if not (alt-screen mode). Characters are
         measured by terminal column width (a combining mark adds no
         column, an East Asian wide character adds two), not raw count,
-        so the cursor ends up where the app itself believes it is."""
+        so the cursor ends up where the app itself believes it is.
+        """
         while run:
             row = int(self.index("insert").split(".")[0])
             gcol = self._term_index_to_col(
@@ -1479,14 +1595,20 @@ class Terminal(tk.Text):
                     self._grid_goto(row, gcol)
             space = self._GRID_COLS - gcol
             if not self._autowrap:
-                chunk, _rest, _w = _term_split_run(run, space)
-                if _rest:
-                    # Everything past the last column overwrites it.
-                    chunk = _term_split_run(run, max(0, space - 1))[0] + run[-1]
+                # Everything past the last column overwrites it.
+                chunk, _w = _term_overwrite_chunk(run, space)
                 run = ""
             else:
-                chunk, run, _w = _term_split_run(run, space)
+                chunk, run, _w = _term_split_run(
+                    run, space, space >= self._GRID_COLS
+                )
+                if not chunk:
+                    # A wide character that doesn't fit leaves the last
+                    # column blank and wraps.
+                    chunk = " "
             _chunk_w = sum(_term_char_width(c) for c in chunk)
+            self._term_split_wide(row, gcol)
+            self._term_split_wide(row, gcol + _chunk_w)
             _gidx = self._term_col_to_index(row, gcol)
             _eidx = self._term_col_to_index(row, gcol + _chunk_w)
             self.delete(f"{row}.{_gidx}", f"{row}.{_eidx}")
@@ -1501,7 +1623,8 @@ class Terminal(tk.Text):
         """(Primary screen) ensure the buffer actually has a line for
         self._cur_line, appending blank lines if the cursor has moved
         past the end (primary-screen lines are created on demand rather
-        than pre-allocated like the alt screen's fixed grid)."""
+        than pre-allocated like the alt screen's fixed grid).
+        """
         last = self._term_last_real_line()
         if self._cur_line > last:
             _ins = self.index("insert")
@@ -1512,7 +1635,8 @@ class Terminal(tk.Text):
         """Pad or trim the buffer with blank lines so it has exactly
         enough lines for the current viewport/grid (needed after a
         resize or alt-screen switch changes how many lines should
-        exist)."""
+        exist).
+        """
         if not self.running:
             return
         if self._alt_mode:
@@ -1536,17 +1660,20 @@ class Terminal(tk.Text):
         line _gl, padding the line with spaces first if it's
         currently narrower (primary-screen lines aren't pre-padded to
         the grid width), translating _gc to the line's actual buffer
-        offset (see _term_col_to_index())."""
+        offset (see _term_col_to_index()).
+        """
         _llw = self._term_col_width(_gl)
         if _gc > _llw:
             self.insert(f"{_gl}.end", " " * (_gc - _llw))
+        self._term_split_wide(_gl, _gc)
         self.mark_set("insert", f"{_gl}.{self._term_col_to_index(_gl, _gc)}")
 
     def _primary_scroll_up(self):
         """(Primary screen) scroll the scroll region up one line: if
         it's the whole screen, just grow the scrollback by moving
         screen_top down; otherwise physically move lines like
-        _grid_scroll_region() does for the alt screen."""
+        _grid_scroll_region() does for the alt screen.
+        """
         if self._scroll_top == 1:
             self.screen_top += 1
             _ins = self.screen_top + self._scroll_bot - 1
@@ -1559,7 +1686,8 @@ class Terminal(tk.Text):
 
     def _primary_scroll_down(self):
         """(Primary screen) scroll the scroll region down one line
-        (reverse index / scroll-down escape)."""
+        (reverse index / scroll-down escape).
+        """
         _lt = self.screen_top + self._scroll_top - 1
         _lb = self.screen_top + self._scroll_bot - 1
         self.insert(f"{_lt}.0", "\n")
@@ -1575,7 +1703,8 @@ class Terminal(tk.Text):
         Returns (controls, cleaned, consumed_length, status), where
         status is "splice" (both parts ready), "pending" (need more
         data before the sequence can be parsed) or "skip" (not a
-        recognizable sequence, drop it)."""
+        recognizable sequence, drop it).
+        """
         controls = ""
         cleaned = "\x1b["
         k = 2
@@ -1608,7 +1737,8 @@ class Terminal(tk.Text):
         """Clear the Text widget's own <<Modified>> flag right after it
         fires, since this terminal doesn't use it (content changes
         constantly as output streams in) but leaving it set would stop
-        the event from firing again."""
+        the event from firing again.
+        """
         if self.edit_modified():
             self.edit_modified(False)
 
@@ -1737,14 +1867,17 @@ class Terminal(tk.Text):
                                     )
                                     self.mark_set("insert", f"{ln}.{_gidx}")
                                 elif p[0] == 1:
-                                    self.delete(f"{ln}.0", f"{ln}.{_gidx}")
+                                    _kn = min(gcol + 1, self._GRID_COLS)
+                                    self._term_split_wide(ln, _kn)
+                                    _kidx = self._term_col_to_index(ln, _kn)
+                                    self.delete(f"{ln}.0", f"{ln}.{_kidx}")
                                     self.insert(
                                         f"{ln}.0",
-                                        " " * gcol,
+                                        " " * _kn,
                                         _kfill if _kfill is not None else "",
                                     )
                                     # The newly-blanked prefix is exactly
-                                    # gcol spaces, so gcol is already the
+                                    # _kn spaces, so gcol is already the
                                     # right raw offset here.
                                     self.mark_set("insert", f"{ln}.{gcol}")
                                 else:
@@ -1770,11 +1903,13 @@ class Terminal(tk.Text):
                                             f"{ln}.{self._term_col_to_index(ln, col)}",
                                         )
                                 elif p[0] == 1:
-                                    _bidx = self._term_col_to_index(ln, col + 1)
+                                    _bn = min(col + 1, self._GRID_COLS)
+                                    self._term_split_wide(ln, _bn)
+                                    _bidx = self._term_col_to_index(ln, _bn)
                                     self.delete(f"{ln}.0", f"{ln}.{_bidx}")
                                     self.insert(
                                         f"{ln}.0",
-                                        " " * (col + 1),
+                                        " " * _bn,
                                         _efill if _efill is not None else "",
                                     )
                                     self.mark_set("insert", f"{ln}.{col}")
@@ -1932,7 +2067,7 @@ class Terminal(tk.Text):
                                     self.mark_set("insert", _ins)
                         elif cmd in ("H", "f"):
                             row_ = p[0] if p[0] else 1
-                            col_ = p[1] if len(p) > 1 and p[1] else 1
+                            col_ = min(p[1] if len(p) > 1 and p[1] else 1, self._GRID_COLS)
                             if self._alt_mode:
                                 self._grid_goto(self._origin_row(row_), col_ - 1)
                             else:
@@ -1944,17 +2079,23 @@ class Terminal(tk.Text):
                         elif cmd == "A":
                             mv = p[0] or 1
                             if self._alt_mode:
-                                self._grid_goto(int(ln) - mv, int(col))
+                                self._grid_goto(self._term_move_row(int(ln), -mv), int(col))
                             else:
-                                self._cur_line = max(self.screen_top, int(ln) - mv)
+                                self._cur_line = (
+                                    self.screen_top
+                                    + self._term_move_row(int(ln) - self.screen_top + 1, -mv)
+                                    - 1
+                                )
                                 self._term_goto(self._cur_line, int(col))
                         elif cmd == "B":
                             mv = p[0] or 1
                             if self._alt_mode:
-                                self._grid_goto(int(ln) + mv, int(col))
+                                self._grid_goto(self._term_move_row(int(ln), mv), int(col))
                             else:
-                                self._cur_line = min(
-                                    int(ln) + mv, self.screen_top + self._VT_ROWS - 1
+                                self._cur_line = (
+                                    self.screen_top
+                                    + self._term_move_row(int(ln) - self.screen_top + 1, mv)
+                                    - 1
                                 )
                                 self._vt_sync()
                                 self._term_goto(self._cur_line, int(col))
@@ -1971,17 +2112,25 @@ class Terminal(tk.Text):
                         elif cmd == "E":
                             mv = p[0] or 1
                             if self._alt_mode:
-                                self._grid_goto(int(ln) + mv, 0)
+                                self._grid_goto(self._term_move_row(int(ln), mv), 0)
                             else:
-                                self._cur_line = int(ln) + mv
+                                self._cur_line = (
+                                    self.screen_top
+                                    + self._term_move_row(int(ln) - self.screen_top + 1, mv)
+                                    - 1
+                                )
                                 self._vt_sync()
                                 self.mark_set("insert", f"{self._cur_line}.0")
                         elif cmd == "F":
                             mv = p[0] or 1
                             if self._alt_mode:
-                                self._grid_goto(int(ln) - mv, 0)
+                                self._grid_goto(self._term_move_row(int(ln), -mv), 0)
                             else:
-                                self._cur_line = max(self.screen_top, int(ln) - mv)
+                                self._cur_line = (
+                                    self.screen_top
+                                    + self._term_move_row(int(ln) - self.screen_top + 1, -mv)
+                                    - 1
+                                )
                                 self.mark_set("insert", f"{self._cur_line}.0")
                         elif cmd == "s" and not _private:
                             if self._alt_mode:
@@ -2013,7 +2162,7 @@ class Terminal(tk.Text):
                                 self._vt_sync()
                                 self._term_goto(self._cur_line, _sc)
                         elif cmd == "G":
-                            mv = p[0] or 1
+                            mv = min(p[0] or 1, self._GRID_COLS)
                             if self._alt_mode:
                                 self._grid_goto(int(ln), mv - 1)
                             else:
@@ -2051,13 +2200,13 @@ class Terminal(tk.Text):
                         elif cmd == "@":
                             mv = p[0] or 1
                             self.insert("insert", " " * mv)
-                            if self._alt_mode:
-                                # Characters pushed past the right margin
-                                # are lost, not kept in an overlong row.
-                                self.delete(
-                                    f"{ln}.{self._term_col_to_index(ln, self._GRID_COLS)}",
-                                    f"{ln}.end",
-                                )
+                            # Characters pushed past the right margin are
+                            # lost, not kept in an overlong row.
+                            self._term_split_wide(ln, self._GRID_COLS)
+                            self.delete(
+                                f"{ln}.{self._term_col_to_index(ln, self._GRID_COLS)}",
+                                f"{ln}.end",
+                            )
                         elif cmd == "L":
                             if self._alt_mode:
                                 r0 = int(ln)
@@ -2598,19 +2747,7 @@ class Terminal(tk.Text):
                 if sp <= 0:
                     i += 1
                     continue
-                _llw = self._term_col_width(self._cur_line)
-                if col > _llw:
-                    self.insert(f"{self._cur_line}.end", " " * (col - _llw))
-                _idx0 = self._term_col_to_index(self._cur_line, col)
-                _idx1 = self._term_col_to_index(self._cur_line, col + sp)
-                self.delete(f"{self._cur_line}.{_idx0}", f"{self._cur_line}.{_idx1}")
-                if self._sgr_tag_cache is None:
-                    self.insert(f"{self._cur_line}.{_idx0}", " " * sp)
-                else:
-                    self.insert(
-                        f"{self._cur_line}.{_idx0}", " " * sp, self._sgr_tag_cache
-                    )
-                self.mark_set("insert", f"{self._cur_line}.{_idx0 + sp}")
+                self._term_goto(self._cur_line, col + sp)
                 i += 1
             elif ch >= " " and ch != "\x7f":
                 j = i
@@ -2632,14 +2769,13 @@ class Terminal(tk.Text):
                     if col >= self._GRID_COLS:
                         col = self._GRID_COLS - 1
                     space = self._GRID_COLS - col
-                    chunk, _rest, _w = _term_split_run(run, space)
-                    if _rest:
-                        # Everything past the last column overwrites it.
-                        chunk = _term_split_run(run, max(0, space - 1))[0] + run[-1]
-                        _w = sum(_term_char_width(c) for c in chunk)
+                    # Everything past the last column overwrites it.
+                    chunk, _w = _term_overwrite_chunk(run, space)
                     _llw = self._term_col_width(self._cur_line)
                     if col > _llw:
                         self.insert(f"{self._cur_line}.end", " " * (col - _llw))
+                    self._term_split_wide(self._cur_line, col)
+                    self._term_split_wide(self._cur_line, col + _w)
                     _idx0 = self._term_col_to_index(self._cur_line, col)
                     _idx1 = self._term_col_to_index(self._cur_line, col + _w)
                     self.delete(f"{self._cur_line}.{_idx0}", f"{self._cur_line}.{_idx1}")
@@ -2671,10 +2807,18 @@ class Terminal(tk.Text):
                         col = 0
                         wrapped = True
                         space = self._GRID_COLS
-                    chunk, run, _w = _term_split_run(run, space)
+                    chunk, run, _w = _term_split_run(
+                        run, space, space >= self._GRID_COLS
+                    )
+                    if not chunk:
+                        # A wide character that doesn't fit leaves the
+                        # last column blank and wraps.
+                        chunk, _w = " ", 1
                     _llw = self._term_col_width(self._cur_line)
                     if col > _llw:
                         self.insert(f"{self._cur_line}.end", " " * (col - _llw))
+                    self._term_split_wide(self._cur_line, col)
+                    self._term_split_wide(self._cur_line, col + _w)
                     _idx0 = self._term_col_to_index(self._cur_line, col)
                     _idx1 = self._term_col_to_index(self._cur_line, col + _w)
                     self.delete(f"{self._cur_line}.{_idx0}", f"{self._cur_line}.{_idx1}")
@@ -2704,7 +2848,8 @@ class Terminal(tk.Text):
         subprocess output for up to _TERM_FRAME_BUDGET seconds per
         call (so a burst of output can't freeze the UI), then
         reschedule itself sooner if there's more backlog to catch up
-        on, or handle the subprocess having exited (closed)."""
+        on, or handle the subprocess having exited (closed).
+        """
         if self._polling:
             return
         self._polling = True
@@ -2764,7 +2909,8 @@ class Terminal(tk.Text):
         bytes/escape sequence the subprocess expects (arrow/function
         keys as CSI/SS3/tilde sequences depending on the current mode,
         Control-letter combos as their C0 control code, everything else
-        as its literal character), and send it."""
+        as its literal character), and send it.
+        """
         self._unpost_menu()
         if not self.running:
             return "break"
@@ -2855,7 +3001,8 @@ class Terminal(tk.Text):
     def _meta_key(self, event):
         """<Meta-Key>/<Alt-Key> handler: send Alt/Meta-modified keys as
         ESC followed by the plain key (the usual "meta sends escape"
-        terminal convention)."""
+        terminal convention).
+        """
         self._unpost_menu()
         if not self.running:
             return "break"
@@ -2892,7 +3039,8 @@ class Terminal(tk.Text):
         """Copy the selected text to the clipboard, joining wrapped
         lines (tagged "wrapcont") back together without an inserted
         newline, matching the actual line the terminal's output put
-        them on."""
+        them on.
+        """
         try:
             first = self.index("sel.first")
             last = self.index("sel.last")
@@ -2918,7 +3066,8 @@ class Terminal(tk.Text):
     def _paste_clipboard(self, e=None):
         """Send the clipboard's text to the subprocess (converting
         newlines to carriage returns), wrapped in bracketed-paste markers if the
-        subprocess enabled that mode."""
+        subprocess enabled that mode.
+        """
         if not self.running:
             return "break"
         try:
@@ -2952,7 +3101,8 @@ class Terminal(tk.Text):
 
     def _termmenu_keyclose(self, e):
         """Close the context menu on any keypress except the ones used
-        to navigate/operate it."""
+        to navigate/operate it.
+        """
         if e.keysym not in (
             "Up",
             "Down",
@@ -2988,7 +3138,8 @@ class Terminal(tk.Text):
         writes, so this isn't correcting that; it only re-applies the
         tracked cursor position via mark_set("insert", ...), whose
         override resets the blink phase and schedules a redraw as a
-        side effect."""
+        side effect.
+        """
 
         def _do():
             try:
@@ -3003,19 +3154,26 @@ class Terminal(tk.Text):
 
     def _term_mouse_pos(self, event):
         """Convert a mouse event's pixel position to 1-based (col, row)
-        terminal grid coordinates."""
+        terminal grid coordinates.
+        """
         idx = self.index(f"@{event.x},{event.y}")
         line, col = idx.split(".")
         top = self.index("@0,0").split(".")[0]
         row = int(line) - int(top) + 1
         row = max(1, min(row, max(1, self._GRID_ROWS)))
         true_col = self._term_index_to_col(line, int(col))
+        _end = self.bbox(idx) if self.compare(idx, "==", f"{line}.end") else None
+        if _end and self.charwidth and event.x > _end[0]:
+            # Past the end of the text there is no character to measure
+            # against, so count the empty cells out in pixels.
+            true_col += (event.x - _end[0]) // self.charwidth
         colnum = max(1, min(true_col + 1, max(1, self._GRID_COLS)))
         return colnum, row
 
     def _term_mouse_mods(self, event):
         """The modifier bits (Shift/Meta/Control) to add to a mouse
-        report, in the encoding mouse-reporting escape sequences use."""
+        report, in the encoding mouse-reporting escape sequences use.
+        """
         mods = 0
         if event.state & 0x1:
             mods |= 4
@@ -3032,7 +3190,8 @@ class Terminal(tk.Text):
         our) normal mouse handling for that button runs exactly as it
         would with mouse reporting off, instead of whatever Shift
         normally does for it. Returns whether it was redirected (the
-        caller should then return "break" to swallow the original)."""
+        caller should then return "break" to swallow the original).
+        """
         if not (self._mouse_mode and (event.state & 0x1)):
             return False
         self._mouse_bypass = True
@@ -3048,7 +3207,8 @@ class Terminal(tk.Text):
         the click for PyNotes' own selection instead); returns whether
         it was actually sent, in either the modern SGR (1006) or legacy
         X10 mouse-report encoding depending on what the subprocess
-        requested."""
+        requested.
+        """
         if not self.running:
             return False
         if self._mouse_bypass:
@@ -3164,7 +3324,8 @@ class Terminal(tk.Text):
 
     def _term_motion(self, event):
         """Report plain (no button held) mouse movement to the
-        subprocess if it asked for all-motion tracking (mode 1003)."""
+        subprocess if it asked for all-motion tracking (mode 1003).
+        """
         if event.state & (0x100 | 0x200 | 0x400):
             return
         if self._mouse_mode == 1003:
@@ -3174,7 +3335,8 @@ class Terminal(tk.Text):
         """Report the scroll wheel to the subprocess if it wants mouse
         events, otherwise scroll the view (or, in the alternate screen,
         send the arrow-key escapes many full-screen apps treat as
-        scrolling)."""
+        scrolling).
+        """
         self.focus_set()
         button = 65
         if event.num == 4:
@@ -3204,7 +3366,8 @@ class Terminal(tk.Text):
     def _term_update_follow(self):
         """Track whether the view is scrolled to the bottom, so new
         output keeps auto-scrolling only while the user hasn't
-        scrolled up to look at history."""
+        scrolled up to look at history.
+        """
         try:
             self._follow_bottom = self.yview()[1] >= 0.999
         except Exception:
@@ -3222,7 +3385,8 @@ class Terminal(tk.Text):
 
     def _focus_in(self, e):
         """Show/resume-blinking the cursor and report focus gained
-        (CSI I) if the subprocess asked for focus events (DECSET 1004)."""
+        (CSI I) if the subprocess asked for focus events (DECSET 1004).
+        """
         self._cursor_has_focus = True
         self._cursor_reset_blink_phase()
         self._cursor_schedule_redraw()
@@ -3234,7 +3398,8 @@ class Terminal(tk.Text):
 
     def _focus_out(self, e):
         """Hide the cursor and report focus lost (CSI O) if the
-        subprocess asked for focus events."""
+        subprocess asked for focus events.
+        """
         self._cursor_has_focus = False
         self._cursor_schedule_redraw()
         if self._focus_reporting and self.running:
@@ -3247,7 +3412,8 @@ class Terminal(tk.Text):
         """Adopt the new theme's colors as the default fg/bg (unless
         currently showing the alternate screen or a reverse-video
         screen, where the "default" colors are deliberately different
-        from the theme) and update the cursor color to match."""
+        from the theme) and update the cursor color to match.
+        """
         try:
             _bg = self.cget("background")
             _fg = self.cget("foreground")
