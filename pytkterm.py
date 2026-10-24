@@ -877,6 +877,7 @@ class Terminal(tk.Text):
             for ln in range(1, min(actual_rows, rows) + 1):
                 width = self._term_col_width(ln)
                 if width > cols:
+                    self._term_split_wide(ln, cols)
                     self.delete(
                         f"{ln}.{self._term_col_to_index(ln, cols)}", f"{ln}.end"
                     )
@@ -906,6 +907,7 @@ class Terminal(tk.Text):
                     self.screen_top, min(self.screen_top + rows - 1, _last) + 1
                 ):
                     if self._term_col_width(ln) > cols:
+                        self._term_split_wide(ln, cols)
                         self.delete(
                             f"{ln}.{self._term_col_to_index(ln, cols)}", f"{ln}.end"
                         )
@@ -1941,11 +1943,13 @@ class Terminal(tk.Text):
                                             )
                                     _final = _gidx
                                 elif p[0] == 1:
-                                    _bidx = self._term_col_to_index(ln, gcol + 1)
+                                    _jn = min(gcol + 1, self._GRID_COLS)
+                                    self._term_split_wide(ln, _jn)
+                                    _bidx = self._term_col_to_index(ln, _jn)
                                     self.delete(f"{ln}.0", f"{ln}.{_bidx}")
                                     self.insert(
                                         f"{ln}.0",
-                                        " " * (gcol + 1),
+                                        " " * _jn,
                                         _jfill if _jfill is not None else "",
                                     )
                                     if int(ln) > 1:
@@ -2028,11 +2032,13 @@ class Terminal(tk.Text):
                                         self.insert(
                                             f"{_er}.0", " " * self._GRID_COLS, _efill
                                         )
-                                _bidx = self._term_col_to_index(_il, _ic + 1)
+                                _in = min(_ic + 1, self._GRID_COLS)
+                                self._term_split_wide(_il, _in)
+                                _bidx = self._term_col_to_index(_il, _in)
                                 self.delete(f"{_il}.0", f"{_il}.{_bidx}")
                                 self.insert(
                                     f"{_il}.0",
-                                    " " * (_ic + 1),
+                                    " " * _in,
                                     _efill if _efill is not None else "",
                                 )
                                 # The newly-blanked prefix is exactly _ic+1
@@ -2196,6 +2202,7 @@ class Terminal(tk.Text):
                                 self._term_goto(self._cur_line, int(col))
                         elif cmd == "P":
                             mv = p[0] or 1
+                            self._term_split_wide(ln, col + mv)
                             self.delete(
                                 "insert",
                                 f"{ln}.{self._term_col_to_index(ln, col + mv)}",
@@ -2292,6 +2299,9 @@ class Terminal(tk.Text):
                                 self._grid_scroll_region(
                                     self._scroll_top, self._scroll_bot, (p[0] or 1)
                                 )
+                                # The cursor stays in its column; its text offset
+                                # means something else once the rows moved.
+                                self._grid_goto(int(ln), col)
                             else:
                                 _rtop = self.screen_top + self._scroll_top - 1
                                 _bot = self.screen_top + self._scroll_bot - 1
@@ -2328,6 +2338,9 @@ class Terminal(tk.Text):
                                 self._grid_scroll_region(
                                     self._scroll_top, self._scroll_bot, -(p[0] or 1)
                                 )
+                                # The cursor stays in its column; its text offset
+                                # means something else once the rows moved.
+                                self._grid_goto(int(ln), col)
                             else:
                                 _rtop = self.screen_top + self._scroll_top - 1
                                 _bot = self.screen_top + self._scroll_bot - 1
@@ -2366,6 +2379,7 @@ class Terminal(tk.Text):
                             if self._alt_mode:
                                 gcol = col
                                 endc = min(gcol + mv, self._GRID_COLS)
+                                self._term_split_wide(ln, endc)
                                 _gidx = self._term_col_to_index(ln, gcol)
                                 _eidx = self._term_col_to_index(ln, endc)
                                 self.delete(f"{ln}.{_gidx}", f"{ln}.{_eidx}")
@@ -2377,13 +2391,15 @@ class Terminal(tk.Text):
                                 self.mark_set("insert", f"{ln}.{_gidx}")
                             else:
                                 _x0 = col
+                                _xn = max(0, min(mv, self._GRID_COLS - _x0))
+                                self._term_split_wide(ln, _x0 + _xn)
                                 _xw = self._term_col_width(ln)
                                 _idx0 = self._term_col_to_index(ln, _x0)
-                                _idx1 = self._term_col_to_index(ln, min(_x0 + mv, _xw))
+                                _idx1 = self._term_col_to_index(ln, min(_x0 + _xn, _xw))
                                 self.delete(f"{ln}.{_idx0}", f"{ln}.{_idx1}")
                                 self.insert(
                                     f"{ln}.{_idx0}",
-                                    " " * mv,
+                                    " " * _xn,
                                     _xfill if _xfill is not None else "",
                                 )
                                 self.mark_set("insert", f"{ln}.{_idx0}")
@@ -2829,8 +2845,9 @@ class Terminal(tk.Text):
                     )
                     if not chunk:
                         # A wide character that doesn't fit leaves the
-                        # last column blank and wraps.
-                        chunk, _w = " ", 1
+                        # last column empty and wraps.
+                        col = self._GRID_COLS
+                        continue
                     _llw = self._term_col_width(self._cur_line)
                     if col > _llw:
                         self.insert(f"{self._cur_line}.end", " " * (col - _llw))
